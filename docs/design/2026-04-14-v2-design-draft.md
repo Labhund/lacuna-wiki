@@ -172,77 +172,112 @@ This is a skill script, not daemon behaviour. The daemon never evaluates claim r
 
 ---
 
-## Page Structure — The Review Paper Template
+## Page Types
 
-Every wiki page follows a standard skeleton. Sections are named consistently so routing decisions are unambiguous and the page compounds toward review quality over time.
+Two types. Not interchangeable.
+
+### Nugget page
+
+Atomic, focused, no imposed structure. A single finding, technique, experimental result, or argument. Written freely during ingest — the agent writes what it needs to write, with full evidence and context preserved.
+
+A nugget is not a bare claim. It retains the semantic richness of the source:
 
 ```markdown
-# {concept}
+# scaled-dot-product-attention-scaling
 
-## Overview
-One-paragraph synthesis. What this is, why it matters, current consensus.
-Updated on every ingest — the most-maintained section.
+Attention scores are computed as QK^T/√dk, where dk is the key vector dimension.
+This scaling prevents the dot products from growing large in high-dimensional spaces,
+which pushes softmax into regions of extremely small gradients — effectively making
+it a near-hard argmax. Without scaling, training becomes unstable for large dk.
+[[raw/vaswani2017.pdf|1]]
 
-## Background
-Historical context, predecessor ideas, the problem this solves.
-
-## Mechanism
-How it works. The core technical or conceptual content.
-
-## Variants
-Significant variations, extensions, competing approaches.
-
-## Applications
-Where and how it is used in practice.
-
-## Limitations
-Known failure modes, scope constraints, open criticisms.
-
-## Open Questions
-Explicitly unknown. Gaps in current knowledge. Gap-type claims live here.
-
-## Contradictions
-Active debates in the field. Claims with refuting sources surface here.
-
-## References
-Auto-maintained by daemon from citation markers. Not hand-written.
+> [!gap] How does this interact with sparse attention patterns?
+> No source yet. The saturation argument assumes dense attention — sparse variants
+> may behave differently.
 ```
 
-Not every page needs all sections. Small pages may only have Overview and References. But the section names are fixed — agents always know where content belongs.
+The claim DB extracts the citation-anchored sentence for search. The page retains the full paragraph for interrogation. These are different things.
 
-**Empty sections are visible gaps.** A Limitations section with no content is a known structural gap that the adversary skill or dream engine should target.
+### Synthesis / Review page
+
+Emerges from stitching related nuggets. Has a structured skeleton because it is explicitly a review — comprehensive, cited, evolving. Created by deliberate agent action, not automatically.
+
+```markdown
+# attention-mechanism
+
+## Overview
+## Background
+## Mechanism
+## Variants
+## Applications
+## Limitations
+## Open Questions
+## Contradictions
+## References
+```
+
+Empty sections are visible gaps in the navigate response: `Open Questions (0 tok — empty)`.
+
+**Promotion**: a nugget becomes a synthesis page candidate when it has accumulated content from multiple independent sources and the agent judges it warrants a full review. Explicit decision — not automatic.
 
 ---
 
-## Ingest Skill — Integration Mandate
+## Ingest Skill — The Core Workflow
 
-The ingest skill enforces read-before-write. The agent never writes to a page without first understanding what is already there. This is what prevents the append-by-default failure mode (second source adds a new paragraph instead of integrating with the first).
+The ingest skill is the most important file in the system. It encodes the integration mandate that ensures pages compound toward review quality rather than accumulating duplicate paragraphs. It uses the task list pattern (same as superpowers) as shared state across what may be a 30+ step multi-turn session.
 
-**Mandatory ingest flow:**
+**The flow:**
 
-1. **Search first** — call the wiki tool with `{"q": "<concept>"}`. Find relevant pages and sections before committing to any routing decision.
-2. **Route** — decide: update an existing page, add to a section of a related page, or create a new page. Creating a new page is the least preferred option. See routing policy below.
-3. **Read the target section** — call the wiki tool with `{"page": "<slug>", "section": "<section>"}`. Get the current content and the navigation panel.
-4. **Check existing claims** — query the DB: what claims already exist in this section? (skills script). Surface any claim with embedding similarity > 0.85 to the new content.
-5. **Decide on integration**:
-   - Same point, same claim → add the new source citation to the existing sentence. No new paragraph.
-   - Same point, slight nuance → modify the existing sentence to incorporate both perspectives. Update citation.
-   - Genuinely new point → add new content in the appropriate section.
-   - Contradicts existing claim → write the new claim, mark old as superseded.
-6. **Write** — using file tools (Edit/Write). The daemon syncs.
+```
+Step 1 — Read the full source
+  Agent reads the paper / tweet / session transcript / URL
+  Using file tools or browser — no special tooling needed
 
-This flow is encoded in the ingest skill. It is not optional. The skill is what ensures pages compound toward review quality rather than accumulating duplicate paragraphs.
+Step 2 — Create todos
+  For each concept worth writing about, create a task:
+  "Write about [concept]: [one sentence describing the idea]"
+  This is the full plan — all concepts identified before writing begins
+
+Step 3 — For each todo (loop):
+  a. COMMIT — agent says out loud:
+     "I am going to write about [X]: [one sentence].
+      But first I will search the wiki for similar content."
+
+  b. SEARCH — wiki tool: {"q": "[one sentence summary]"}
+     The summary is a better query than the concept name alone.
+     Returns: section-level hits with scores, token counts, navigation context.
+
+  c. READ — for any close matches (score > threshold):
+     Read the matched section (file tools or MCP navigate).
+     Check: same claim? slight nuance? contradiction?
+
+  d. DECIDE — one of:
+     - Same point → add this source citation to the existing sentence
+     - Nuance → extend/modify the existing sentence, update citations
+     - New angle → create a nugget page or add a new section
+     - Contradiction → write new claim, note supersession in the page
+     - Surface the decision to the user if judgment call is non-obvious
+
+  e. WRITE — file tools (Edit/Write). Daemon syncs automatically.
+
+  f. MARK COMPLETE — tick the todo
+
+Step 4 — Done when todo list is empty
+```
+
+The commit step (saying it out loud) serves three purposes: it keeps the agent accountable to stated intent, it makes the process transparent to the user who can interrupt at any point, and it produces the natural language query for the search step.
+
+The decision step surfaces non-obvious choices to the user — "this paper adds a gradient saturation argument to a claim already made by vaswani2017. Options: (a) add citation, (b) extend sentence, (c) new nugget. What do you think?" This is the adversarial interface in action — the user stays in the loop at integration decision points. The wiki earns its quality from these decisions.
 
 ### Routing policy
 
 | Situation | Action |
 |---|---|
 | Concept already has its own page | Update that page |
-| Concept exists as a section of another page | Update that section; promote to own page only if coverage warrants it |
-| Concept is genuinely new | Create new page with review paper skeleton |
-| Partial overlap with existing section | Add to that section; cross-reference with wikilink |
-
-**Promote-to-page rule**: a concept section gets its own page when it has accumulated content from ≥ 3 independent sources and its Mechanism section is non-trivial. Harness judgment call — not automatic.
+| Concept exists as a section of another page | Update that section |
+| Concept is genuinely new | Create nugget page |
+| Partial overlap with existing section | Add to that section + cross-reference wikilink |
+| Concept section has grown (≥ 3 sources, substantial content) | Promote to own page — harness judgment, not automatic |
 
 ---
 
