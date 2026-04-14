@@ -433,6 +433,9 @@ Pages move toward review quality, not away from it. A new source either adds to 
 **P6 — The wiki is personal infrastructure.**
 It is not a product. It is not a shared platform. It is a research instrument tuned to one researcher's domain and judgment. The skills directory is the researcher's schema — it co-evolves with the wiki.
 
+**P8 — The wiki gets cheaper over time; re-extraction doesn't.**
+Each ingest call pays the LLM cost once. That understanding is permanently encoded. Future sessions read compiled structure — the daemon serves it from DuckDB, zero LLM. Over a multi-year research arc the cost per insight falls as the wiki fills in. Tools that re-derive on demand (RAG, graphify over raw/) pay the extraction cost repeatedly. The wiki is the energy-efficient alternative because it compounds coherence rather than rebuilding it.
+
 **P7 — Intelligence is never automated.**
 The adversary skill runs when the researcher invokes it. Crystallisation of sessions happens when the researcher decides. No background LLM workers. No auto-resolution of contradictions. The researcher is always in the loop at judgment calls.
 
