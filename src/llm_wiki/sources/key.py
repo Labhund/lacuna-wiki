@@ -36,6 +36,32 @@ def derive_key_from_bibtex(bibtex: str, conn: duckdb.DuckDBPyConnection) -> str:
     return _disambiguate(base, conn)
 
 
+def key_from_author_year(
+    author: str,
+    year: int | str,
+    title: str | None,
+    conn: duckdb.DuckDBPyConnection,
+) -> str:
+    """Derive key as {lastname}{year}{title_prefix_5}.
+
+    Uses last space-separated token of author string as last name — matches
+    bibtex convention ({firstauthorlastname}{year}). Title prefix is the first
+    5 alphanumeric chars of the slugified title.
+
+    Examples:
+        "Chris Hay", 2026, "We Don't Need KV Cache Anymore?" → "hay2026wedon"
+        "Vaswani", 2017, "Attention Is All You Need"          → "vaswani2017atten"
+    """
+    last_name = author.split()[-1] if author.strip() else author
+    author_slug = re.sub(r"[^a-z]", "", last_name.lower()) or "source"
+    year_str = str(year)[:4]
+    base = author_slug + year_str
+    if title:
+        title_slug = re.sub(r"[^a-z0-9]", "", title.lower())
+        base += title_slug[:5]
+    return _disambiguate(base, conn)
+
+
 def _disambiguate(base: str, conn: duckdb.DuckDBPyConnection) -> str:
     existing = {row[0] for row in conn.execute("SELECT slug FROM sources").fetchall()}
     if base not in existing:
