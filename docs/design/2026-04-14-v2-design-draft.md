@@ -45,7 +45,8 @@ On `wiki/` file change:
    - Claim identity = hash of the authored sentence text
    - If claim text unchanged: preserve existing `relationship` from adversary
    - If claim text changed: reset `relationship = NULL` (new claim, needs re-evaluation)
-   - Assign sequential citation numbers per page → stored in `claim_sources.citation_number`
+   - Embed claim text (nomic-embed-text, same model as sections) → `claims.embedding`
+   - Assign sequential citation numbers per (page, source) pair → stored in `claim_sources.citation_number`
 5. Update manifest
 
 On `raw/` or `wiki/` **move event**:
@@ -150,19 +151,18 @@ raw/
       vaswani2017.pdf
       vaswani2017.md      ← parsed, agent reads this (immutable content)
       vaswani2017.bib
+      2026-04-14-attn-investigation.md  ← crystallised session, same domain
   biochemistry/
     trna/
       crick1966.pdf ...
-  sessions/               ← crystallised sessions
-    2026-04-14-attn.md
-  notes/                  ← human-authored notes, experiments
+      2026-04-14-trna-experiment.md     ← experiment, same domain
 ```
+
+**Directory placement and `source_type` are orthogonal.** The directory reflects domain — where the content belongs intellectually. `source_type` is DB metadata — what kind of source it is (paper, session, note, experiment). A session about attention goes in `raw/machine-learning/attention/`, not in `raw/sessions/`. No type-based top-level directories.
 
 **Cluster = relative path from `wiki/` or `raw/`.** It is never authored — always derived. The user can reorganise directories freely; the daemon updates the DB silently.
 
 **`raw/` content is immutable after registration.** The user can move files and directories — paths and cluster membership update automatically. But file content is not edited after `add-source`. To reprocess a source, run `llm-wiki add-source --replace`.
-
-Sessions, notes, and experiments all live under `raw/` in their respective subdirectories — same immutability contract as papers.
 
 ---
 
@@ -202,7 +202,8 @@ sources (
     path            TEXT NOT NULL,
     title           TEXT,
     authors         TEXT,
-    published_date  DATE,                -- recency is the only authority signal
+    published_date  DATE,                -- when the source was published (authority signal)
+    registered_at   TIMESTAMP,           -- when added to this wiki (drives stale targeting)
     source_type     TEXT                 -- paper | preprint | book | blog | url | podcast | transcript | session | note | experiment
 )
 
@@ -219,7 +220,7 @@ claims (
 claim_sources (
     claim_id        INTEGER REFERENCES claims(id),
     source_id       INTEGER REFERENCES sources(id),
-    citation_number INTEGER,             -- daemon-assigned sequential number per page
+    citation_number INTEGER,             -- sequential per (page, source) pair — same source cited N times on a page still gets one number
     relationship    TEXT,                -- supports | refutes | gap | NULL (unevaluated)
     checked_at      TIMESTAMP,           -- when this relationship was last assessed
     PRIMARY KEY (claim_id, source_id)
@@ -500,7 +501,7 @@ The citation format `[[key.pdf]]` is the claim marker. The daemon:
 2. Extracts sentences containing `[[*.pdf]]` markers
 3. Resolves each key to a `source_id` in the sources table (slug match)
 4. Hashes the sentence text — identity is stable for a given authored sentence
-5. Assigns sequential citation numbers per page → stored in DB only, never written to file
+5. Assigns citation numbers per (page, source) pair — sequential, first-seen order. The same source cited multiple times on a page gets the same number. Stored in DB only, never written to file.
 6. If hash matches existing claim: preserve `relationship`. If new: insert with `relationship = NULL`.
 
 `relationship` (supports | refutes | gap) is populated by the adversary skill — a harness-driven, multi-turn LLM evaluation invoked explicitly by the user. The daemon never calls it.
@@ -630,7 +631,14 @@ Step 2 — For each claim (todo loop):
 
   f. TICK — mark todo complete.
 
-Step 3 — Report
+Step 3 — Commit + Report
+  Batch-commit all relationship verdicts accumulated in Step 2:
+    llm-wiki adversary-commit \
+      --verdict claim_id=42,rel=supports,checked_at=... \
+      --verdict claim_id=17,rel=refutes,checked_at=...  \
+      ...
+  (One CLI call per run. Daemon pauses, writes all rows, resumes.)
+
   N claims evaluated. K supported, J gaps, M fidelity fixes, L supersessions.
   Fidelity fixes listed with one-line description each:
     "Fixed: [page › section] — claim overstated source confidence; softened to match source wording."
@@ -733,8 +741,9 @@ Step 3 — Dialogue
   User guides where each finding should land.
 
 Step 4 — Write
-  File session as source: raw/sessions/{date}-{slug}.md
-  Register via add-source --type session (source_type=session)
+  File session as source: raw/{concept}/{date}-{slug}.md
+  Register via: llm-wiki add-source raw/{concept}/{date}-{slug}.md --type session
+  .md input skips PDF parsing and bibtex fetch — the CLI registers directly and chunks for source_chunks.
   Update existing pages or create new page — same commit→search→decide loop as ingest.
 
 Step 5 — File
@@ -796,7 +805,7 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 
 8. **BM25 + vector score combination**: weighted sum or reciprocal rank fusion for hybrid search? Affects result quality and tuning.
 
-9. **Semantically close sections in navigate response**: precomputed (daemon maintains a similarity cache) or computed on-the-fly at navigate time? Latency vs. freshness tradeoff.
+9. **Semantically close sections in navigate response**: **resolved** — on-the-fly ANN query against `sections.embedding` at navigate time, using DuckDB vss HNSW index. Always fresh, no cache invalidation. DuckDB vss handles this natively; latency acceptable for a personal tool serving one researcher.
 
 10. **Sentence splitter for claim extraction**: claim boundaries are citation-anchored, reducing (not eliminating) the sentence-split problem. Still need a defined strategy for parsing within citation boundaries — markdown callouts with `>` prefix, equation blocks, code blocks may cause false boundaries. Library or regex TBD.
 
@@ -818,3 +827,6 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 | Claim extraction granularity | Citation-anchor boundary. Claim = sentence(s) sharing one `[[key.pdf]]` marker. Daemon splits at citation boundaries, not sentence boundaries. One verdict per anchor. |
 | Review paper section enforcement | Advisory. Skill guidance, not daemon enforcement. |
 | Video/audio ingest | Supported via optional pipeline: yt-dlp (audio-only download) → faster-whisper (local transcription, RTX 5080) → `.md` transcript → `add-source`. YouTube URLs and local audio/video files both handled. `source_type = podcast \| transcript`. Optional deps — not required for base install. |
+| citation_number scope | Per unique (page_id, source_id) pair. Assigned first-seen order as the daemon processes citation markers left-to-right. Same source cited twice on a page gets the same number. The bibliography block in the navigate response lists sources ordered by number. |
+| Semantically close sections | On-the-fly ANN query against `sections.embedding` at navigate time (DuckDB vss HNSW index). Always fresh; no precomputed cache. Latency acceptable for a personal tool. |
+| Directory vs source_type | Orthogonal. Directory placement reflects intellectual domain; `source_type` is DB metadata. No type-based top-level directories in `raw/`. A session about attention goes in `raw/machine-learning/attention/`, not `raw/sessions/`. |
