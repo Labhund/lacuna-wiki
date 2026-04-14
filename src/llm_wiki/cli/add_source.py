@@ -138,4 +138,4 @@ def add_source(
 
     # 7 — Report
     console.print(f"\n  Read:    {md_dest.relative_to(vault_root)}")
-    console.print(f"  Cite as: [[{key}{cite_ext}]]\n")
+    console.print(f"  Cite as: [[{key}{cite_ext}]]", markup=False)
