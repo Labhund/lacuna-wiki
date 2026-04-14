@@ -323,15 +323,17 @@ def test_add_youtube_source_type_is_transcript(vault, monkeypatch):
     assert src_type == "transcript"
 
 
-def test_add_youtube_source_key_uses_title_slug(vault, monkeypatch):
+def test_add_youtube_source_key_uses_author_year(vault, monkeypatch):
     monkeypatch.chdir(vault)
     monkeypatch.setattr("subprocess.run", _make_fake_yt_dlp(_FAKE_VTT, _FAKE_YT_INFO))
     CliRunner().invoke(add_source, [_YT_URL])
     conn = duckdb.connect(str(db_path(vault)))
     slug = conn.execute("SELECT slug FROM sources").fetchone()[0]
     conn.close()
-    # "Attention Is All You Need — Talk" → "attention-is-all-you-need-talk"
-    assert slug == "attention-is-all-you-need-talk"
+    # channel="ML Conference" → last name "conference", year=2023,
+    # title "Attention Is All You Need — Talk" → first 5 alphanumeric "atten"
+    # → "conference2023atten"
+    assert slug == "conference2023atten"
 
 
 def test_add_youtube_source_title_and_date(vault, monkeypatch):
