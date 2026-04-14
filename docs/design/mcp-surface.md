@@ -69,7 +69,14 @@ links in: transformer, bert-architecture, gpt-2
 semantically close sections (by claim similarity):
   bahdanau-attention › Alignment Mechanism (score 0.87, 640 tok)
   luong-attention › Global vs Local (score 0.81, 510 tok)
+
+sources cited on this page:
+  [1] vaswani2017   Attention Is All You Need            2017-06-12
+  [2] bahdanau2014  Neural Machine Translation by...     2014-09-01
+  [3] luong2015     Effective Approaches to Attention... 2015-08-17
 ```
+
+Citation numbers are daemon-assigned sequentially per page. Agent never authors `|N` numbers.
 
 ---
 

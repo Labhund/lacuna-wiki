@@ -41,10 +41,12 @@ On file change:
 1. Parse section structure → update `sections`
 2. Recompute section embeddings → update `sections.embedding`
 3. Parse wikilinks → update `links`
-4. Parse citation markers (`[[raw/paper.pdf|1]]`) → update `claims` + `claim_sources`
+4. Parse citation markers (`[[key.pdf]]`) → update `claims` + `claim_sources`
 5. Update manifest
 
 The daemon does not decide what to write. It does not summarise. It does not evaluate. It is infrastructure.
+
+**Citation format:** `[[vaswani2017.pdf]]` — source key only, no path prefix, no `|N` number. Obsidian resolves by shortest unique filename match. The daemon assigns sequential citation numbers as a derived DB field (per page, per section). The agent never invents filenames — it uses the canonical key printed by `llm-wiki add-source`.
 
 ### The harness
 
@@ -53,6 +55,59 @@ The harness (Claude Code, Hermes, or anything with file tools + MCP) is the inte
 ### Crystallisation loop
 
 Explorations compound into the knowledge base just like ingested sources do. When an agent session produces a meaningful insight, analysis, or synthesis — it is filed back into the wiki as a first-class source. The wiki grows not only from papers but from the accumulated reasoning of the sessions that used it. This is the adversarial dream engine's role: Phase 1 (generative, high temperature) produces hypotheses; Phase 2 (adversarial, low temperature) falsifies them against the wiki; survivors are crystallised as new wiki content.
+
+---
+
+## Source Registration CLI
+
+**`llm-wiki add-source`** — the only way sources enter the wiki. Eliminates filename invention by the agent.
+
+```
+llm-wiki add-source path/to/paper.pdf [--concept {name}]
+llm-wiki add-source https://arxiv.org/abs/1706.03762 [--concept {name}]
+```
+
+**Pipeline:**
+
+```
+1. Download / copy input to staging area
+2. Extract metadata (title, authors, DOI, year) from PDF or URL
+3. Fetch bibtex via CrossRef or Semantic Scholar (DOI lookup)
+4. Derive canonical key: {firstauthorlastname}{year}  (e.g. vaswani2017)
+5. Run PDF parser → {key}.md  (marker / pymupdf4llm / configured tool)
+6. Write three files:
+     raw/{concept}/{key}.pdf
+     raw/{concept}/{key}.md    ← agent reads this
+     raw/{concept}/{key}.bib   ← bibtex metadata
+7. Register in sources table (slug=key, path=raw/{concept}/{key}.pdf,
+   published_date from bibtex, source_type=paper|preprint|etc.)
+8. Print:
+     Read:    raw/attention/vaswani2017.md
+     Cite as: [[vaswani2017.pdf]]
+```
+
+The agent reads the `.md`, references the `.pdf` in citations. The canonical key is the only name it ever uses. If two papers resolve to the same key, the CLI appends a disambiguator (`vaswani2017b`).
+
+### Concept clustering
+
+`--concept {name}` organises all three files into `raw/{concept}/` and sets `cluster = {name}` on the source row. Wiki pages for that cluster live in `wiki/{concept}/`. The cluster field on pages is set by the ingest skill — not the daemon.
+
+Cluster membership is the harness's judgment call, not a structural enforcement. The `cluster` field is advisory: it powers the `wiki_read_cluster` MCP call pattern and filters in SQL but does not gate anything.
+
+### Directory anatomy
+
+```
+wiki/
+  {concept}/         ← authored pages by cluster
+  ...
+raw/
+  {concept}/
+    vaswani2017.pdf
+    vaswani2017.md   ← parsed, agent reads this
+    vaswani2017.bib
+  ...
+sessions/            ← crystallised agent sessions (source_type=session)
+```
 
 ---
 
@@ -106,7 +161,7 @@ claims (
 claim_sources (
     claim_id        INTEGER REFERENCES claims(id),
     source_id       INTEGER REFERENCES sources(id),
-    citation_number INTEGER,
+    citation_number INTEGER,             -- daemon-assigned sequential number per page/section
     relationship    TEXT                 -- supports | refutes | gap
 )
 ```
@@ -190,7 +245,7 @@ A page early in its life:
 Attention scores are computed as QK^T/√dk, where dk is the key vector dimension.
 This scaling prevents dot products from growing large in high-dimensional spaces,
 pushing softmax into low-gradient saturation. Without it, training becomes unstable
-for large dk. [[raw/vaswani2017.pdf|1]]
+for large dk. [[vaswani2017.pdf]]
 
 > [!gap] How does this interact with sparse attention patterns?
 > No source yet.
@@ -305,7 +360,14 @@ links in:   transformer | bert-architecture | gpt-2
 semantically close sections:
   bahdanau-attention › Alignment Mechanism  (0.87, 640 tok)
   luong-attention › Global vs Local         (0.81, 510 tok)
+
+sources cited on this page:
+  [1] vaswani2017   Attention Is All You Need            2017-06-12
+  [2] bahdanau2014  Neural Machine Translation by...     2014-09-01
+  [3] luong2015     Effective Approaches to Attention... 2015-08-17
 ```
+
+The bibliography block gives the agent recency context without a separate tool call. Citation numbers are daemon-assigned, sequentially per page.
 
 Note: `Open Questions (0 tok — empty)` surfaces a gap without any additional tooling.
 
@@ -336,13 +398,57 @@ No write contention because there is exactly one writer by design.
 
 Claims are extracted **deterministically** by the daemon on every file change. No LLM.
 
-The citation format `[[raw/paper.pdf|1]]` is the claim marker. The daemon:
+The citation format `[[key.pdf]]` is the claim marker. The daemon:
 1. Sentence-splits the changed section
-2. Extracts sentences containing `[[raw/...]]` markers
-3. Parses the source slug and citation number from each marker
-4. Inserts into `claims` + `claim_sources` with `relationship = NULL`
+2. Extracts sentences containing `[[*.pdf]]` markers
+3. Resolves each key to a `source_id` in the sources table (key = slug)
+4. Assigns sequential citation numbers per page (derived field, not authored)
+5. Inserts into `claims` + `claim_sources` with `relationship = NULL`
 
 `relationship` (supports | refutes | gap) is populated by the adversary skill — a harness-driven, multi-turn LLM evaluation invoked explicitly by the user. The daemon never calls it.
+
+---
+
+## Philosophy
+
+Hard principles. These are not aspirations — they are design constraints. Anything that violates them gets cut.
+
+### Seven hard points
+
+**P1 — The agent is the sole intelligence.**
+The daemon does not decide, summarise, or evaluate. Skills encode conventions. The harness is where reasoning happens. Automation of judgment is the failure mode, not a feature.
+
+**P2 — The wiki records assertions, not truths.**
+Every claim is a claim from a source. The wiki is a compiled record of what specific sources said, with the researcher's synthesis layer on top. It does not adjudicate. It does not average. It is not consensus.
+
+**P3 — The citation is the only hard contract.**
+`[[key.pdf]]` is the one syntactic commitment the agent makes. Everything else — section headings, callout markers, wikilinks — is convention, not requirement. The citation format is what makes the claims graph possible.
+
+**P4 — Recency beats authority.**
+No h-index, no journal tier, no citation count. The only authority signal is `published_date`. Newer evidence supersedes older evidence. The contradiction detection query is the mechanism.
+
+**P5 — Compounding is directional.**
+Pages move toward review quality, not away from it. A new source either adds to what's there or corrects it. Duplication is the failure mode. The ingest skill's commit→search→decide loop is the mechanism.
+
+**P6 — The wiki is personal infrastructure.**
+It is not a product. It is not a shared platform. It is a research instrument tuned to one researcher's domain and judgment. The skills directory is the researcher's schema — it co-evolves with the wiki.
+
+**P7 — Intelligence is never automated.**
+The adversary skill runs when the researcher invokes it. Crystallisation of sessions happens when the researcher decides. No background LLM workers. No auto-resolution of contradictions. The researcher is always in the loop at judgment calls.
+
+### Carried forward from v1
+
+From `PHILOSOPHY.md` in the v1 repo:
+
+| Principle | v1 ID | Status |
+|---|---|---|
+| LLM for understanding, code for bookkeeping | P13 | **Carried** — this is P1 above sharpened |
+| Rebuildable state directory | P9 | **Carried** — daemon rebuilds DB from markdown |
+| One source of truth | P3 (v1) | **Carried** — markdown files are truth, DB is derived |
+| Talk pages for uncertainty | P4 (v1) | **Open** — see Open Questions |
+| Single-file pages | P6 (v1) | **Updated** — pages may span sections, no structural enforcement |
+| No scoring systems | P10 | **Carried** — recency only |
+| Human judgment for contradictions | P11 | **Carried** — adversary skill, not daemon |
 
 ---
 
@@ -371,6 +477,6 @@ The citation format `[[raw/paper.pdf|1]]` is the claim marker. The daemon:
 
 4. **InfraNodus integration pattern**: agent calls it directly from harness, or a skill wraps it? Skill wrapper standardises how gap detection is invoked and lets us log what was found.
 
-5. **Cluster concept**: v1 had named clusters. Worth keeping for multi-page operations and manifest structure? Cluster = a set of pages that form a sub-topic together.
+5. **Talk pages** (carried from v1 P4): should pages have associated talk/discussion pages for recording uncertainty, ongoing debates, and known weaknesses? Supported but not required feels right — but unclear if v2 or v3. The crystallisation loop may make this redundant (sessions are filed as sources).
 
-6. **Review paper section enforcement**: are section names enforced by the daemon (reject unknown section names) or advisory (skill-level convention only)? Enforcement gives structural guarantees; advisory is more flexible for domain-specific wikis.
+6. **Review paper section enforcement**: advisory (skill-level guidance) — settled. Section names are the agent's judgment. The north star is communicated in the skill, not enforced by the daemon.
