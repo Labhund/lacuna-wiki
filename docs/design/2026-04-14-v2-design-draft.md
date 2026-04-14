@@ -344,10 +344,19 @@ Step 1 — Read the full source
   Agent reads the paper / tweet / session transcript / URL
   Using file tools or browser — no special tooling needed
 
-Step 2 — Create todos
+Step 2 — Create todos and pause for feedback
   For each concept worth writing about, create a task:
   "Write about [concept]: [one sentence describing the idea]"
-  This is the full plan — all concepts identified before writing begins
+  Present the full list to the user:
+    "Found N concepts to write about. Here's what I'm planning:
+     1. [concept]: [one sentence]
+     2. [concept]: [one sentence]
+     ...
+     Anything to add, remove, or reframe before I start?"
+  User can add concepts, drop ones that aren't worth writing about, correct
+  the framing, or say go. The list is adjusted, then writing begins.
+  This is the only user pause before the loop — once underway, the only
+  pauses are non-obvious routing decisions and supersession confirmations.
 
 Step 3 — For each todo (loop):
   a. COMMIT — agent says out loud:
