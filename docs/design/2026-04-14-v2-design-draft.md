@@ -207,20 +207,21 @@ sources (
 )
 
 claims (
-    id              INTEGER PRIMARY KEY,
-    page_id         INTEGER REFERENCES pages(id),
-    section_id      INTEGER REFERENCES sections(id),
-    text            TEXT NOT NULL,       -- citation-anchored sentence, verbatim from page
-    embedding       FLOAT[1024],         -- ANN similarity for adversary targeting: find claims
-                                         -- semantically close to the one being evaluated
-    superseded_by   INTEGER REFERENCES claims(id)   -- explicit supersession link
+    id                    INTEGER PRIMARY KEY,
+    page_id               INTEGER REFERENCES pages(id),
+    section_id            INTEGER REFERENCES sections(id),
+    text                  TEXT NOT NULL,       -- citation-anchored sentence, verbatim from page
+    embedding             FLOAT[1024],         -- ANN similarity for adversary targeting
+    superseded_by         INTEGER REFERENCES claims(id),
+    last_adversary_check  TIMESTAMP            -- NULL = never evaluated; drives virgin targeting
 )
 
 claim_sources (
     claim_id        INTEGER REFERENCES claims(id),
     source_id       INTEGER REFERENCES sources(id),
     citation_number INTEGER,             -- daemon-assigned sequential number per page
-    relationship    TEXT,                -- supports | refutes | gap
+    relationship    TEXT,                -- supports | refutes | gap | NULL (unevaluated)
+    checked_at      TIMESTAMP,           -- when this relationship was last assessed
     PRIMARY KEY (claim_id, source_id)
 )
 
@@ -575,8 +576,9 @@ Four entry points:
 
 | Mode | Scope | Use case |
 |---|---|---|
-| `virgin` | `relationship = NULL` | First pass after batch ingest |
-| `recency` | refuting source newer than supporting | Weekly hygiene run |
+| `virgin` | `last_adversary_check IS NULL` | First pass after batch ingest |
+| `stale` | `last_adversary_check < [date]` | Re-evaluate after new sources registered |
+| `recency` | `checked_at` on relationship older than newest supporting source | Weekly hygiene |
 | `page` | all claims on one page | Before citing that page heavily |
 | `claim` | single claim | Spot check |
 
