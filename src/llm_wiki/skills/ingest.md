@@ -244,3 +244,101 @@ llm-wiki status
 | Source contradicts a newer claim | Note the discrepancy; do not supersede older by newer |
 | Source contradicts an older claim | Write new claim; confirm supersession with user |
 
+
+---
+
+## Aligned Mode
+
+Aligned mode replaces the Step 3 write loop with a per-concept dialogue. Present each concept to the user before writing anything.
+
+Use when: new domain, contested source, counter-consensus claims, or building shared understanding.
+
+### Session manifest
+
+At the start of an aligned session, create:
+
+```
+wiki/.sessions/{source-slug}-{YYYY-MM-DD}.md
+```
+
+Write to it throughout the session — it is your memory across compaction events. Read it back immediately after any compaction.
+
+Initial content:
+```markdown
+## Source: {slug}
+## Started: {date}
+## Mode: aligned
+## Human preferences:
+(fill in as the user expresses them)
+
+## Completed:
+(fill in as concepts are approved and written)
+
+## Remaining:
+(copy from the todo list; remove as completed)
+
+## Pending questions:
+(anything unresolved — flag here, not in the wiki page)
+```
+
+After the session ends: delete the manifest or archive it to `wiki/reading-notes/`.
+
+### Per-concept aligned loop
+
+For each concept in the todo list (instead of the standard Step 3 a–f):
+
+**a. Search first**
+
+```json
+{"q": "[one sentence from Step 1 structured analysis]", "scope": "all"}
+```
+
+Read the top results. Note what the wiki already says.
+
+**b. Present to user**
+
+> **Concept: [name]**
+>
+> Source says: [direct quote or close paraphrase from source]
+>
+> Wiki currently says: [one sentence summary of best match, or "nothing yet"]
+>
+> Delta: [gap, nuance, or contradiction]
+>
+> My read: [one sentence framing]
+>
+> → Proposed claim: [the sentence you would write, with [[links]] and [[citation.ext]]]
+>
+> Does this framing match your understanding?
+
+**c. Adjust and write (on approval)**
+
+Adjust framing, routing, or wikilinks based on the user's response. Capture any stated preferences in the session manifest.
+
+Write immediately on approval — not at the end of the loop. Update the manifest: move this concept from Remaining to Completed.
+
+**d. Tick todo**
+
+Mark the task completed.
+
+### Reading notes
+
+Capture the user's commentary, questions, disagreements, and framings in a reading note page:
+
+```
+wiki/reading-notes/{source-slug}.md
+```
+
+Format:
+```markdown
+# Reading Notes: {source title}
+{date} — {source slug}
+
+## [Concept name]
+[User's comment verbatim or close paraphrase]
+
+## Questions
+[Unresolved questions flagged by user]
+```
+
+Reading notes are citable wiki pages — the daemon indexes them. A comment like "I think the KV Direct framing undersells the Markov property" is a first-class intellectual artifact, not a chat log.
