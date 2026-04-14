@@ -47,7 +47,7 @@ _TABLES = [
     """CREATE TABLE IF NOT EXISTS claims (
     id                   INTEGER DEFAULT nextval('claims_id_seq') PRIMARY KEY,
     page_id              INTEGER REFERENCES pages(id),
-    section_id           INTEGER REFERENCES sections(id),
+    section_id           INTEGER,
     text                 TEXT NOT NULL,
     embedding            FLOAT[768],
     superseded_by        INTEGER REFERENCES claims(id),
