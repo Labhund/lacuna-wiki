@@ -181,15 +181,18 @@ If something is misrouted: move it. Cut from here, add to the right page.
 
 ### c. Flag for Adversary
 
-For any sentence where the written text and the source intent feel misaligned — or where you are uncertain whether the claim is fully supported — add an inline comment:
+For any sentence where claim and source feel misaligned, add:
 
 ```markdown
-The residual stream encodes full conversation history. <!-- TODO: adversary check -->
+Claim sentence here. [[key.ext]] <!-- TODO: adversary check -->
 ```
 
-Do not rewrite or second-guess. Flag and move on. The adversary resolves these.
+Flag if any of these apply:
+1. **Assertion strength** — claim says "proves" or states a general truth; source says "suggests" or ran a limited experiment.
+2. **Scope creep** — claim implies universal applicability; source demonstrated on one architecture, one dataset, or one scale.
+3. **Hedging omitted** — source caveats something the wiki text does not reflect.
 
-**Boundary:** This pass is editorial, not epistemic. If you find yourself wanting to re-search or re-read the source to resolve a doubt, that is adversary work — flag it instead.
+Do not rewrite. Do not re-read the source. Flag and move on — reaching for the source to resolve a doubt is adversary work, not editorial.
 
 This step is bounded to pages touched this session. Pages from previous sessions that should now link to something created this session are the residual case — the daemon's broken-link detection surfaces those.
 
