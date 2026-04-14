@@ -1,9 +1,12 @@
 """lacuna add-source — register a source file or URL in the vault."""
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import sys
 import tempfile
+import time
 from datetime import date
 from pathlib import Path
 
@@ -25,7 +28,7 @@ from lacuna_wiki.sources.youtube import fetch_youtube_transcript, is_youtube_url
 from lacuna_wiki.sources.key import derive_key, derive_key_from_bibtex, key_from_author_year
 from lacuna_wiki.sources.metadata import extract_doi, fetch_bibtex, parse_bibtex_fields
 from lacuna_wiki.sources.register import register_chunks, register_source
-from lacuna_wiki.vault import db_path, find_vault_root
+from lacuna_wiki.vault import db_path, find_vault_root, state_dir_for
 
 console = Console()
 
@@ -117,8 +120,29 @@ def add_source(
         console.print("[bold red]Aborting — cannot embed source without a running embedding server.[/bold red]")
         sys.exit(1)
 
-    conn = get_connection(db_path(vault_root))
+    db = db_path(vault_root)
+    pause_ack = state_dir_for(vault_root) / "daemon.paused"
+
+    from lacuna_wiki.daemon.process import is_running, read_pid
+    daemon_pid = read_pid()
+    daemon_running = daemon_pid is not None and is_running(daemon_pid)
+
+    if daemon_running:
+        os.kill(daemon_pid, signal.SIGUSR1)
+        deadline = time.monotonic() + 10.0
+        while not pause_ack.exists():
+            if time.monotonic() > deadline:
+                console.print("[red]Daemon did not pause within 10 s — aborting.[/red]")
+                sys.exit(1)
+            time.sleep(0.05)
+
+    conn = get_connection(db)
     init_db(conn)
+
+    def _cleanup() -> None:
+        conn.close()
+        if daemon_running:
+            pause_ack.unlink(missing_ok=True)
 
     is_url = input_path.startswith(("http://", "https://"))
 
@@ -132,7 +156,7 @@ def add_source(
                 text, yt_meta = fetch_youtube_transcript(url)
             except RuntimeError as exc:
                 console.print(f"[red]Transcript download failed:[/red] {exc}")
-                conn.close()
+                _cleanup()
                 sys.exit(1)
 
             # Metadata first — key derivation needs author and year
@@ -172,7 +196,7 @@ def add_source(
                 pdf_bytes = fetch_rxiv_pdf(url)
             except Exception as exc:
                 console.print(f"[red]PDF download failed:[/red] {exc}")
-                conn.close()
+                _cleanup()
                 sys.exit(1)
 
             # Extract text via temp file (key not yet known)
@@ -254,7 +278,7 @@ def add_source(
                 text = fetch_url_as_markdown(url)
             except Exception as exc:
                 console.print(f"[red]Fetch failed:[/red] {exc}")
-                conn.close()
+                _cleanup()
                 sys.exit(1)
 
             jina_meta = parse_jina_headers(text)
@@ -304,7 +328,7 @@ def add_source(
         src = Path(input_path).resolve()
         if not src.exists():
             console.print(f"[red]File not found:[/red] {src}")
-            conn.close()
+            _cleanup()
             sys.exit(1)
 
         suffix = src.suffix.lower()
@@ -359,7 +383,7 @@ def add_source(
     chunks = chunk_md(md_dest, strategy=strategy)
     if not chunks:
         console.print("  [yellow]⚠[/yellow] No chunks produced — file may be empty")
-        conn.close()
+        _cleanup()
         return
 
     console.print(f"  {len(chunks)} chunks — embedding...")
@@ -372,7 +396,7 @@ def add_source(
     rel_path = str(primary_dest.relative_to(vault_root))
     source_id = register_source(conn, key, rel_path, final_title, final_authors, final_date, source_type)
     register_chunks(conn, source_id, chunks, embeddings)
-    conn.close()
+    _cleanup()
 
     console.print(f"\n  Read:    {md_dest.relative_to(vault_root)}")
     console.print(f"  Cite as: [[{key}{cite_ext}]]", markup=False)
