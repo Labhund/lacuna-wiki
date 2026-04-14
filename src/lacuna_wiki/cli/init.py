@@ -98,7 +98,7 @@ def init(path: str) -> None:
 
 
 def _offer_mcp_config(vault_root: Path) -> None:
-    """Offer to wire the MCP server into the user's harness configs."""
+    """Offer to wire the MCP server and install skills into the user's harnesses."""
     console.print("\n[bold]MCP configuration[/bold]")
 
     if click.confirm("  Wire into Claude Code (~/.claude/mcp.json)?", default=True):
@@ -115,6 +115,26 @@ def _offer_mcp_config(vault_root: Path) -> None:
         if click.confirm("  Wire into OpenClaw (openclaw mcp set)?", default=True):
             _merge_openclaw_mcp(vault_root)
             console.print("  [green]✓[/green] OpenClaw MCP config updated")
+
+    console.print("\n[bold]Agent skills[/bold]")
+    from lacuna_wiki.cli.install_skills import copy_skills
+
+    claude_skills = Path.home() / ".claude" / "skills"
+    if click.confirm(f"  Install skills to Claude Code ({claude_skills})?", default=True):
+        copied = copy_skills(claude_skills)
+        console.print(f"  [green]✓[/green] {len(copied)} skill(s) installed to Claude Code")
+
+    hermes_skills = Path.home() / ".hermes" / "skills"
+    if (Path.home() / ".hermes").exists():
+        if click.confirm(f"  Install skills to Hermes ({hermes_skills})?", default=True):
+            copied = copy_skills(hermes_skills)
+            console.print(f"  [green]✓[/green] {len(copied)} skill(s) installed to Hermes")
+
+    if shutil.which("openclaw"):
+        openclaw_skills = Path.home() / ".openclaw" / "skills"
+        if click.confirm(f"  Install skills to OpenClaw ({openclaw_skills})?", default=True):
+            copied = copy_skills(openclaw_skills)
+            console.print(f"  [green]✓[/green] {len(copied)} skill(s) installed to OpenClaw")
 
 
 def _merge_claude_code_mcp(mcp_path: Path, vault_root: Path) -> None:
