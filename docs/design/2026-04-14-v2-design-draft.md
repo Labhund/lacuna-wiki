@@ -799,6 +799,35 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 
 ---
 
+## MCP Integration Testing Protocol
+
+MCP-level tests run in a **separate Claude Code window** from the implementation session. Reasons: keeps dev context clean, ensures the agent interacts with tools naively (as Hermes would), and requires the full stack running (embedding server, daemon, MCP server) which is infrastructure not needed in the dev loop.
+
+### Full stack checklist (separate window)
+
+1. **Embedding server** — `ollama serve` with `nomic-embed-text` pulled. Daemon and `add-source` both call `http://localhost:8005`.
+2. **Test vault** — `tests/fixtures/wiki-vault/` (committed, with real `.md` pages and at least one registered source). The daemon is pointed at this vault.
+3. **Daemon** — `llm-wiki start` from inside the test vault. Confirms watchdog + initial sync work end-to-end.
+4. **MCP server** — registered in the test session's Claude Code config pointing at the test vault DB.
+5. **Skills** — ingest skill, adversary skill (and any others) installed in the test session.
+
+### What to verify in the separate window
+
+- `wiki_search` with a real research question returns ranked, sensible results
+- `wiki_read` on a known page returns content + navigation panel
+- `wiki_read_cluster` scopes correctly
+- A claim with a registered source shows citation number and relationship
+- Tool schemas parse without error (no missing required fields, no type mismatches)
+- Empty results and not-found cases return graceful errors, not stack traces
+
+### What stays in pytest
+
+- Tool function logic (ranking, schema correctness, empty results, FK joins)
+- All daemon sync behaviour (already covered)
+- Error path coverage that is hard to trigger through a live session
+
+---
+
 ## Open Questions
 
 1. **InfraNodus integration pattern**: agent calls it directly from harness, or a skill wraps it? Low priority — run over wiki pages (compiled), not raw/.
