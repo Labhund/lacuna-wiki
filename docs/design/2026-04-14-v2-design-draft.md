@@ -210,7 +210,7 @@ sources (
 claims (
     id                    INTEGER PRIMARY KEY,
     page_id               INTEGER REFERENCES pages(id),
-    section_id            INTEGER REFERENCES sections(id),
+    section_id            INTEGER,             -- soft ref to sections.id — no FK (see DuckDB note below)
     text                  TEXT NOT NULL,       -- citation-anchored sentence, verbatim from page
     embedding             FLOAT[768],         -- ANN similarity for adversary targeting
     superseded_by         INTEGER REFERENCES claims(id),
@@ -238,6 +238,16 @@ source_chunks (
     -- no preview column: computed at query time from start_line/end_line
 )
 ```
+
+### DuckDB FK constraints — limitations found during TDD
+
+Two constraints discovered while writing integration tests against DuckDB 1.5.x:
+
+**1. `claims.section_id` is a plain `INTEGER`, not a FK.**
+When `_sync_sections` deletes and re-inserts section rows (sections are replaced on every sync), DuckDB checks all FK constraints referencing the `claims` table — including `claim_sources.claim_id REFERENCES claims(id)` — even though `claim_sources` is unrelated to the sections deletion. The engine incorrectly blocks any statement that touches a table involved in the FK graph, not just the constraint being violated. Removing the `REFERENCES sections(id)` from `section_id` avoids this. `section_id` is informational anyway (tells you which section a claim was parsed from); database-enforced referential integrity adds no value here.
+
+**2. `_delete_page` runs outside a transaction (auto-commit per statement).**
+Inside an explicit `conn.begin()` / `conn.commit()` block, DuckDB FK checks use the *pre-transaction committed state* of child tables, not the current transaction's view. This means deleting child rows (sections, claims, claim_sources) and then deleting the parent (pages) in the same transaction raises a FK violation even though the children are gone in the current snapshot. Fix: let each `DELETE` in `_delete_page` auto-commit individually. The upsert path (insert/update for existing pages) keeps its transaction wrapper — only the delete path is affected.
 
 ### Why each table
 
