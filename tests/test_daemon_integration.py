@@ -122,3 +122,34 @@ def test_initial_sync_on_startup(vault):
     assert conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0] == 2
     slugs = {r[0] for r in conn.execute("SELECT slug FROM pages").fetchall()}
     assert slugs == {"alpha", "beta"}
+
+
+def test_sessions_directory_not_synced(vault):
+    vault_root, conn = vault
+    handler = WikiEventHandler(conn, vault_root, fake_embed)
+
+    sessions_dir = vault_root / "wiki" / ".sessions"
+    sessions_dir.mkdir()
+    manifest = sessions_dir / "hay2026wedon-2026-04-14.md"
+    manifest.write_text("## Source: hay2026wedon\n## Completed: kv-cache\n")
+
+    fire_modified(handler, manifest)
+
+    row = conn.execute(
+        "SELECT id FROM pages WHERE slug='hay2026wedon-2026-04-14'"
+    ).fetchone()
+    assert row is None, "Session manifest must not be indexed as a wiki page"
+
+
+def test_sessions_directory_skipped_on_initial_sync(vault):
+    vault_root, conn = vault
+    (vault_root / "wiki" / "real-page.md").write_text("# real\n\nContent.\n")
+    sessions_dir = vault_root / "wiki" / ".sessions"
+    sessions_dir.mkdir()
+    (sessions_dir / "hay2026wedon-2026-04-14.md").write_text("## Source: hay2026wedon\n")
+
+    initial_sync(conn, vault_root, fake_embed)
+
+    assert conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0] == 1
+    slug = conn.execute("SELECT slug FROM pages").fetchone()[0]
+    assert slug == "real-page"

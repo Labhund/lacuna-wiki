@@ -60,6 +60,9 @@ class WikiEventHandler(FileSystemEventHandler):
             rel = abs_path.relative_to(self._vault_root)
         except ValueError:
             return
+        # Skip wiki/.sessions/ — ingest session manifests, not wiki pages
+        if ".sessions" in rel.parts:
+            return
         with self._lock:
             sync_page(self._conn, self._vault_root, rel, self._embed_fn)
 
@@ -73,4 +76,6 @@ def initial_sync(
     wiki_dir = vault_root / "wiki"
     for md_file in sorted(wiki_dir.rglob("*.md")):
         rel = md_file.relative_to(vault_root)
+        if ".sessions" in rel.parts:
+            continue
         sync_page(conn, vault_root, rel, embed_fn)
