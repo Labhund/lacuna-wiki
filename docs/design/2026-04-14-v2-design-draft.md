@@ -1,6 +1,6 @@
 # llm-wiki v2 — Design Draft
 
-> Working document. Not a spec yet. Captures the design conversation to date.
+> Design spec. Captures all decisions to date. Open questions noted explicitly.
 
 ---
 
@@ -104,16 +104,19 @@ Cluster membership is the harness's judgment call, not a structural enforcement.
 
 ```
 wiki/
-  {concept}/         ← authored pages by cluster (mutable, daemon watches)
+  {concept}/              ← authored pages by cluster (mutable, daemon watches)
   ...
 raw/
   {concept}/
     vaswani2017.pdf
-    vaswani2017.md   ← parsed, agent reads this (immutable after add-source)
+    vaswani2017.md        ← parsed, agent reads this (immutable after add-source)
     vaswani2017.bib
-  ...                ← immutable after registration. Do not edit manually.
-sessions/            ← crystallised agent sessions (source_type=session)
+  sessions/
+    2026-04-14-attn.md   ← crystallised session files live here
+  ...                     ← immutable after registration. Do not edit manually.
 ```
+
+Sessions, notes, and experiments are registered via `add-source` like any other source. They land in `raw/sessions/`, `raw/notes/`, or `raw/experiments/` — same immutability contract. The `sessions/` top-level directory in earlier versions of this doc is removed; everything goes through `raw/`.
 
 `raw/` is write-once. The daemon does not watch it. If a source needs reprocessing (e.g. better PDF parser), run `llm-wiki add-source --replace` which rewrites the files and recomputes source_chunks rows.
 
@@ -121,7 +124,7 @@ sessions/            ← crystallised agent sessions (source_type=session)
 
 ## Database Schema
 
-Six tables. Each earns its place against a concrete use case.
+Seven tables. Each earns its place against a concrete use case.
 
 ```sql
 pages (
@@ -154,7 +157,7 @@ sources (
     title           TEXT,
     authors         TEXT,
     published_date  DATE,                -- recency is the only authority signal
-    source_type     TEXT                 -- paper | preprint | book | blog | url | session
+    source_type     TEXT                 -- paper | preprint | book | blog | url | podcast | transcript | session | note | experiment
 )
 
 claims (
@@ -205,7 +208,7 @@ Every claim in the wiki carries an implicit type based on how it was authored:
 
 | Type | Meaning | Citation required |
 |---|---|---|
-| **Source** | Verbatim or direct paraphrase of a source | Yes — `[[raw/...]]` marker |
+| **Source** | Verbatim or direct paraphrase of a source | Yes — `[[key.pdf]]` marker |
 | **Analysis** | Inference drawn from sourced facts, reasoning shown | Yes — cites the facts it reasons from |
 | **Unverified** | No authoritative source yet | No — but flagged as unverified |
 | **Gap** | Known unknown — explicitly missing knowledge | No — `claim_sources.relationship = gap` when a source flags it |
@@ -256,7 +259,7 @@ The review paper quality is a **north star communicated in the skill as writing 
 
 A page that begins as one paragraph from one source and grows into a comprehensive multi-source document is not changing type. It is compounding. That is the entire point.
 
-The only structural convention enforced across all pages is the citation format `[[raw/source|N]]`. Everything else — section headings, organisation, depth — is the agent's judgment. Callout markers (`[!gap]`, `[!analysis]`) are optional conventions the skill recommends, not requirements.
+The only structural convention enforced across all pages is the citation format `[[key.pdf]]`. Everything else — section headings, organisation, depth — is the agent's judgment. Callout markers (`[!gap]`, `[!analysis]`) are optional conventions the skill recommends, not requirements.
 
 A page early in its life:
 
@@ -297,9 +300,10 @@ Step 3 — For each todo (loop):
      "I am going to write about [X]: [one sentence].
       But first I will search the wiki for similar content."
 
-  b. SEARCH — wiki tool: {"q": "[one sentence summary]"}
+  b. SEARCH — wiki tool: {"q": "[one sentence summary]", "scope": "all"}
      The summary is a better query than the concept name alone.
-     Returns: section-level hits with scores, token counts, navigation context.
+     scope: "all" surfaces both compiled wiki sections and source chunks from
+     registered-but-not-yet-ingested sources — catches relevant material early.
 
   c. READ — for any close matches (score > threshold):
      Read the matched section (file tools or MCP navigate).
@@ -308,7 +312,7 @@ Step 3 — For each todo (loop):
   d. DECIDE — one of:
      - Same point → add this source citation to the existing sentence
      - Nuance → extend/modify the existing sentence, update citations
-     - New angle → create a nugget page or add a new section
+     - New angle → create a new page or add a new section
      - Contradiction → write new claim, note supersession in the page
      - Surface the decision to the user if judgment call is non-obvious
 
@@ -458,11 +462,11 @@ Pages move toward review quality, not away from it. A new source either adds to 
 **P6 — The wiki is personal infrastructure.**
 It is not a product. It is not a shared platform. It is a research instrument tuned to one researcher's domain and judgment. The skills directory is the researcher's schema — it co-evolves with the wiki.
 
-**P8 — The wiki gets cheaper over time; re-extraction doesn't.**
-Each ingest call pays the LLM cost once. That understanding is permanently encoded. Future sessions read compiled structure — the daemon serves it from DuckDB, zero LLM. Over a multi-year research arc the cost per insight falls as the wiki fills in. Tools that re-derive on demand (RAG, graphify over raw/) pay the extraction cost repeatedly. The wiki is the energy-efficient alternative because it compounds coherence rather than rebuilding it.
-
 **P7 — Intelligence is never automated.**
 The adversary skill runs when the researcher invokes it. Crystallisation of sessions happens when the researcher decides. No background LLM workers. No auto-resolution of contradictions. The researcher is always in the loop at judgment calls.
+
+**P8 — The wiki gets cheaper over time; re-extraction doesn't.**
+Each ingest call pays the LLM cost once. That understanding is permanently encoded. Future sessions read compiled structure — the daemon serves it from DuckDB, zero LLM. Over a multi-year research arc the cost per insight falls as the wiki fills in. Tools that re-derive on demand (RAG, graphify over raw/) pay the extraction cost repeatedly. The wiki is the energy-efficient alternative because it compounds coherence rather than rebuilding it.
 
 ### Carried forward from v1
 
@@ -654,13 +658,14 @@ Step 3 — Dialogue
   User guides where each finding should land.
 
 Step 4 — Write
-  File session as source: sessions/{date}-{slug}.md
-  Register via add-source (source_type=session)
+  File session as source: raw/sessions/{date}-{slug}.md
+  Register via add-source --type session (source_type=session)
   Update existing pages or create new page — same commit→search→decide loop as ingest.
 
 Step 5 — File
   New wiki page or updated pages committed.
   Session is now citable: [[{date}-{slug}.md]]
+  (File lives in raw/sessions/ — same immutability contract as all sources)
 ```
 
 The output is a filed session (citable, dated, preserved) plus a wiki page (or updates to existing pages). The session serves as the source; the page is the synthesis.
@@ -672,7 +677,7 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 | Feature | Status |
 |---|---|
 | Multimodal embeddings (images, figures) | Schema-ready (`source_type` + `claims.embedding` accommodate it), implementation v3 |
-| Adversary skill | Skills directory — not a daemon behaviour |
+| Adversary auto-run | Never automatic — explicitly invoked by researcher only |
 | Confidence scoring | Derivable from claim_sources when adversary populates relationship |
 | wiki_query (opaque answer box) | Removed — agent traverses directly |
 | wiki_ingest MCP tool | Removed — CLI + harness ingest skill |
@@ -684,9 +689,7 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 
 ## Open Questions
 
-1. **Claim extraction granularity**: sentences are the current plan. Should multi-sentence passages sharing a citation be one claim? Coupled to adversary skill design — cannot settle until adversary is scoped.
-
-2. **InfraNodus integration pattern**: agent calls it directly from harness, or a skill wraps it? Low priority given P8 — run over wiki pages (already compiled), not raw/.
+1. **InfraNodus integration pattern**: agent calls it directly from harness, or a skill wraps it? Low priority given P8 — run over wiki pages (already compiled), not raw/.
 
 ---
 
@@ -697,5 +700,6 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 | Embedding model | `nomic-embed-text` — text-only, already served locally on RTX 5080. Multimodal embeddings are v3. |
 | Daemon trigger | Both: inotify live watcher (always-on, silent) + `llm-wiki sync` CLI (explicit, scriptable). Daemon is silent by default — logs to file, never stdout, never blocks writes. Visible only via `llm-wiki status`. |
 | Talk pages | Cut. The crystallise skill covers uncertainty and ongoing debates as filed sessions. A separate talk file per page is friction with no payoff. |
+| Claim extraction granularity | Citation-anchor boundary. Claim = sentence(s) sharing one `[[key.pdf]]` marker. Daemon splits at citation boundaries, not sentence boundaries. One verdict per anchor. |
 | Review paper section enforcement | Advisory. Skill guidance, not daemon enforcement. |
 | Video/audio ingest | Supported via optional pipeline: yt-dlp (audio-only download) → faster-whisper (local transcription, RTX 5080) → `.md` transcript → `add-source`. YouTube URLs and local audio/video files both handled. `source_type = podcast \| transcript`. Optional deps — not required for base install. |
