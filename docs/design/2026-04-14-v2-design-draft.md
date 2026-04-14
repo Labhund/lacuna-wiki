@@ -10,7 +10,7 @@ A personal research knowledge substrate that grounds LLM agents in current, spec
 
 This is not a RAG system. RAG re-derives. A wiki accumulates and compounds. The agent navigating it isn't averaging over training priors — it is traversing a compiled structure of specific claims from specific papers, built and maintained by the researcher's own harness.
 
-**The north star:** each wiki page, given sufficient sources, should be publishable as a review paper on its topic. Not a bag of paragraphs — a synthesised, cited, evolving document that improves with every source added.
+**Quality aspiration:** each wiki page, given sufficient sources, should read like a section of a review paper — synthesised, cited, evolving, improving with every source added. This is not enforced structurally. The mechanism is the ingest skill's commit→search→decide loop, which pushes pages toward integration rather than accumulation. The skill communicates the aspiration; the system creates the conditions for it.
 
 ---
 
@@ -21,15 +21,15 @@ This is not a RAG system. RAG re-derives. A wiki accumulates and compounds. The 
 ```
 Body (markdown pages)          Soul (DuckDB)
 ──────────────────────         ──────────────────────────────────
-Human + agent readable         Section-level vectors
-Authored by harness LLM        Wikilink graph
-Edited by anyone               Claims + sources + relationships
-Git as audit trail             Supersession links
-Obsidian-compatible            Recency-based contradiction flags
-                               Token counts + section topology
+Human + agent readable         Index: section vectors, token counts,
+Written by agent or human        section topology, wikilink graph
+  (daemon doesn't care)        Knowledge graph: claims, sources,
+Git as audit trail               claim_sources, supersession links
+Obsidian-compatible            Derived queries: recency flags,
+                                 broken link detection, gap reports
 ```
 
-The markdown files are truth. The DB is derived from them. The daemon watches the files and keeps the DB in sync — always, regardless of what edited the file (harness, Obsidian, vim, anything).
+The markdown files are truth. The DB is derived from them. The daemon watches the files and keeps the DB in sync — always, regardless of what edited the file (harness, Obsidian, vim, anything). The daemon does not distinguish between authors.
 
 The skills directory is the schema. It is the most important part of the system — encoding what the wiki is, how pages are structured, how to ingest, how to integrate, when to create vs update. Karpathy's original called this CLAUDE.md; in v2 it is a skills directory that any harness can load. The schema co-evolves with the wiki.
 
@@ -113,7 +113,7 @@ The agent reads the `.md`, references the `.pdf` in citations. The canonical key
 
 ### Concept clustering
 
-`--concept {path}` is a path hint that places files at `raw/{path}/`. Paths are arbitrarily nested — any depth:
+`--concept {path}` is a path hint that places files at `raw/{path}/`. If omitted, files go to `raw/` root. Paths are arbitrarily nested — any depth:
 
 ```
 llm-wiki add-source paper.pdf --concept machine-learning
@@ -192,7 +192,7 @@ sections (
 
 links (
     source_page_id  INTEGER REFERENCES pages(id),
-    target_slug     TEXT NOT NULL,       -- may not resolve yet; daemon flags broken links
+    target_slug     TEXT NOT NULL,       -- may not resolve; broken links detected by CLI lint
     PRIMARY KEY (source_page_id, target_slug)
 )
 
@@ -211,7 +211,8 @@ claims (
     page_id         INTEGER REFERENCES pages(id),
     section_id      INTEGER REFERENCES sections(id),
     text            TEXT NOT NULL,       -- citation-anchored sentence, verbatim from page
-    embedding       FLOAT[1024],
+    embedding       FLOAT[1024],         -- ANN similarity for adversary targeting: find claims
+                                         -- semantically close to the one being evaluated
     superseded_by   INTEGER REFERENCES claims(id)   -- explicit supersession link
 )
 
@@ -231,8 +232,8 @@ source_chunks (
     start_line      INTEGER NOT NULL,    -- offset into raw .md file
     end_line        INTEGER NOT NULL,
     token_count     INTEGER,
-    preview         TEXT,                -- first ~200 chars for search result display only
     embedding       FLOAT[1024]          -- nomic-embed-text, same model as sections
+    -- no preview column: computed at query time from start_line/end_line
 )
 ```
 
@@ -247,7 +248,7 @@ source_chunks (
   - `supports` — source confirms the claim
   - `refutes` — source contradicts the claim (either fidelity failure or supersession by newer source)
   - `gap` — source identifies this as an open question; claim is a known unknown
-- **source_chunks**: the raw evidence layer. Source `.md` files chunked at `add-source` time, embeddings stored, offsets into the `.md` recorded. Full text lives in the `.md` only — the DB stores `start_line`/`end_line` and a short `preview` for search display. Permanently consistent: `raw/` files are immutable after registration, so offsets never go stale. No daemon involvement — `raw/` is write-once, `wiki/` is what the daemon watches.
+- **source_chunks**: the raw evidence layer. Source `.md` files chunked at `add-source` time, embeddings stored, offsets into the `.md` recorded. Full text lives in the `.md` only — the DB stores `start_line`/`end_line`; search result previews are computed at query time from those offsets. Permanently consistent: `raw/` files are immutable after registration, so offsets never go stale. No daemon involvement — `raw/` is write-once, `wiki/` is what the daemon watches.
 
 ### Claim types
 
@@ -300,7 +301,13 @@ This is a skill script, not daemon behaviour. The daemon never evaluates claim r
 
 ## Pages
 
-Pages are just pages. The agent writes them. No imposed structure, no page types, no promotion events. The extra burden of deciding what kind of page to write is eliminated — the only question is what to write and where.
+Pages are just pages. The agent writes them. No imposed structure, no page types, no promotion events, no frontmatter. The extra burden of deciding what kind of page to write is eliminated — the only question is what to write and where.
+
+**Conventions:**
+- `slug` = filename without `.md` (e.g. `scaled-dot-product-attention`)
+- `title` = first `# heading` in the file
+- No frontmatter — v2 uses none. Metadata lives in the DB.
+- Cluster = relative directory path from `wiki/`
 
 The review paper quality is a **north star communicated in the skill as writing guidance** — not a mechanical property of the system. The ingest skill tells the agent: write like you're contributing to a review paper on this topic. The agent is intelligent; it structures content appropriately without being told how.
 
@@ -370,7 +377,7 @@ Step 3 — For each todo (loop):
 Step 4 — Done when todo list is empty
 ```
 
-The commit step (saying it out loud) serves three purposes: it keeps the agent accountable to stated intent, it makes the process transparent to the user who can interrupt at any point, and it produces the natural language query for the search step.
+The commit step is forced chain-of-thought at decision boundaries. The agent generates the articulation of intent, which becomes part of its own context window and measurably improves the quality of the downstream search query and decision. In LLM-land, generating the statement IS the reasoning step — the output is the mechanism, not documentation of it. The user can interrupt at any commit; that is a side benefit, not the purpose.
 
 The decision step surfaces non-obvious choices to the user — "this paper adds a gradient saturation argument to a claim already made by vaswani2017. Options: (a) add citation, (b) extend sentence, (c) new nugget. What do you think?" This is the adversarial interface in action — the user stays in the loop at integration decision points. The wiki earns its quality from these decisions.
 
@@ -513,8 +520,8 @@ It is not a product. It is not a shared platform. It is a research instrument tu
 **P7 — Intelligence is never automated.**
 The adversary skill runs when the researcher invokes it. Crystallisation of sessions happens when the researcher decides. No background LLM workers. No auto-resolution of contradictions. The researcher is always in the loop at judgment calls.
 
-**P8 — Synthesised knowledge is compiled once.**
-No component re-derives what the wiki has already ingested. Each ingest call pays the LLM cost once; future sessions read compiled structure from DuckDB. Reading raw source material at query time (source_chunks, scope:"all") is the evidence layer working as designed — that is not re-derivation. Re-deriving synthesised knowledge is the failure mode: it signals the wiki is not doing its job.
+**P8 — No LLM re-synthesises what the wiki has already compiled.**
+Each ingest call pays the LLM cost once; the result is permanently encoded. Future sessions read compiled structure from DuckDB — zero LLM for navigation. Reading raw source material at query time (source_chunks, scope:"all") is the evidence layer working as designed — not re-synthesis. Re-synthesising wiki content from scratch (RAG-style) is the failure mode: it signals the wiki is not doing its job.
 
 **P9 — The files are the user's files.**
 The wiki sits passively on top of the file system. It adds value without adding friction, obscure rituals, or required workflows. The user can reorganise directories, edit in Obsidian, vim, or anything else, and the system adapts silently. No commands required to keep the DB in sync. No file format the user must understand to use the wiki. The only contract the user must honour is the citation format — everything else is the system's problem, not theirs.
@@ -609,9 +616,11 @@ Step 2 — For each claim (todo loop):
   f. TICK — mark todo complete.
 
 Step 3 — Report
-  N claims evaluated. K supported, J gaps, M fidelity fixes (silent),
-  L supersessions (P approved, Q skipped).
-  List of superseded claims with their replacements.
+  N claims evaluated. K supported, J gaps, M fidelity fixes, L supersessions.
+  Fidelity fixes listed with one-line description each:
+    "Fixed: [page › section] — claim overstated source confidence; softened to match source wording."
+  Supersessions listed with old claim, new claim, approvals/skips.
+  The report is informational — fixes are already written. Git diff is the revert mechanism.
 ```
 
 ### Prompt posture
@@ -758,17 +767,27 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 
 1. **InfraNodus integration pattern**: agent calls it directly from harness, or a skill wraps it? Low priority — run over wiki pages (compiled), not raw/.
 
-2. **MCP tool schema**: parameter table needed before implementation. `q`, `page`, `section`, `pages`, `scope` — mutual exclusivity rules, defaults, error behaviour when incompatible params combined.
+2. **MCP tool schema**: parameter table needed before implementation. `q`, `page`, `section`, `pages`, `scope` — mutual exclusivity rules, defaults, error behaviour when incompatible params combined. Also: error cases — page not found, section not found, empty results.
 
-3. **Cluster prefix matching semantics**: `wiki_read_cluster("biochemistry")` — does it match exact cluster value or all pages whose cluster starts with `biochemistry/`? Prefix match is more useful but needs to be specified explicitly.
+3. **Cluster prefix matching**: **resolved** — prefix match. `WHERE cluster = ? OR cluster LIKE ? || '/%'`. Root edge case: pages directly in `wiki/` have `cluster = NULL`, returned when root is queried.
 
-4. **Daemon error recovery**: DB partially updated on crash. Rebuild from markdown via `llm-wiki sync`? Cost of re-embedding 3000 sections? Need a recovery story before implementation.
+4. **Daemon error recovery**: DB partially updated on crash. Rebuild from markdown via `llm-wiki sync`? Cost of re-embedding 3000 sections if embedding server is down? Connection recovery on daemon restart?
 
-5. **Embedding model migration**: when nomic-embed-text is replaced, all embeddings in sections and source_chunks are invalid. Migration path needed — bulk re-embed or rebuild DB from scratch?
+5. **Embedding model migration**: when nomic-embed-text is replaced, all embeddings are invalid. Bulk re-embed or rebuild DB?
 
-6. **Directory move batching**: inotify fires per-file events for directory moves. 50 files moved = 100 events. Daemon needs debounce/batch strategy to avoid processing each file individually during large reorganisations.
+6. **Move event debounce**: inotify fires per-file for directory moves AND for single-file active editing. Both need debounce — directory moves to batch, single-file to avoid re-parsing on every keystroke. Debounce window and batching strategy TBD.
 
-7. **Fidelity fixes and P7**: the adversary silently edits pages for fidelity failures without user review. This is a judgment call the agent can get wrong. Options: (a) surface a diff to the user before writing, (b) add an explicit P7 exception for adversary fidelity corrections, (c) require user confirmation for all adversary writes. Needs a decision.
+7. **Fidelity fixes and P7**: **resolved** — silent fixes during adversary run, collected and reported at Step 3 as an informational list ("Fixed: [page › section] — [one sentence reason]"). Researcher asked for corrections by invoking the skill; the end-of-run report is the audit trail. Git diff is the revert mechanism. Supersession still requires explicit user confirmation.
+
+8. **BM25 + vector score combination**: weighted sum or reciprocal rank fusion for hybrid search? Affects result quality and tuning.
+
+9. **Semantically close sections in navigate response**: precomputed (daemon maintains a similarity cache) or computed on-the-fly at navigate time? Latency vs. freshness tradeoff.
+
+10. **Sentence splitter for claim extraction**: claim boundaries are citation-anchored, reducing (not eliminating) the sentence-split problem. Still need a defined strategy for parsing within citation boundaries — markdown callouts with `>` prefix, equation blocks, code blocks may cause false boundaries. Library or regex TBD.
+
+11. **Embedding serving mechanism**: how does the daemon call nomic-embed-text? HTTP endpoint (Ollama/llama.cpp server)? Python library import? What happens if GPU is busy? Does embedding block or queue?
+
+12. **Git integration**: "git as audit trail" is in the diagram. Who commits — daemon or harness? When? What format for commit messages? If harness commits (agent responsibility), the skill needs to encode the convention.
 
 ---
 
