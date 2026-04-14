@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable
 
 import duckdb
@@ -44,8 +45,18 @@ def dispatch_wiki(
     return multi_read(conn, pages)  # type: ignore[arg-type]
 
 
-def make_wiki_tool(conn: duckdb.DuckDBPyConnection, embed_fn: EmbedFn, dim: int = 768) -> None:
-    """Register the wiki tool on mcp_app with the given DB connection and embedder."""
+def make_wiki_tool(
+    conn_or_path: "duckdb.DuckDBPyConnection | Path",
+    embed_fn: EmbedFn,
+    dim: int = 768,
+) -> None:
+    """Register the wiki tool on mcp_app.
+
+    Pass a pre-opened DuckDBPyConnection (daemon mode — shared within one
+    process) or a Path to the database file (stdio mode — ephemeral per-call
+    connections so the write lock is never held between requests).
+    """
+    from lacuna_wiki.db.connection import get_connection
 
     @mcp_app.tool()
     def wiki(
@@ -64,5 +75,13 @@ def make_wiki_tool(conn: duckdb.DuckDBPyConnection, embed_fn: EmbedFn, dim: int 
 
         Multi-read: provide `pages` (list of slugs).
         """
-        return dispatch_wiki(conn, embed_fn, q=q, scope=scope,
-                             page=page, section=section, pages=pages, dim=dim)
+        if isinstance(conn_or_path, Path):
+            conn = get_connection(conn_or_path, readonly=True)
+            try:
+                return dispatch_wiki(conn, embed_fn, q=q, scope=scope,
+                                     page=page, section=section, pages=pages, dim=dim)
+            finally:
+                conn.close()
+        else:
+            return dispatch_wiki(conn_or_path, embed_fn, q=q, scope=scope,
+                                 page=page, section=section, pages=pages, dim=dim)

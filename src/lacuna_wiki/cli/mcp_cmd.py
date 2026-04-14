@@ -35,7 +35,6 @@ def mcp_command() -> None:
     from functools import partial
 
     from lacuna_wiki.config import load_config
-    from lacuna_wiki.db.connection import get_connection
     from lacuna_wiki.mcp.server import make_wiki_tool, mcp_app
     from lacuna_wiki.sources.embedder import embed_texts
 
@@ -49,6 +48,9 @@ def mcp_command() -> None:
         click.echo("Semantic search will be unavailable. BM25 only.", err=True)
 
     embed_fn = partial(embed_texts, url=config["embed_url"], model=config["embed_model"])
-    conn = get_connection(db, readonly=True)
-    make_wiki_tool(conn, embed_fn, dim=config["embed_dim"])
+    # Pass the db path rather than an open connection so the tool opens and
+    # closes a fresh read-only connection per call — this avoids holding the
+    # DuckDB file lock between requests, which would block concurrent writers
+    # such as `lacuna add-source`.
+    make_wiki_tool(db, embed_fn, dim=config["embed_dim"])
     mcp_app.run(transport="stdio")
