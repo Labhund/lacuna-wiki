@@ -114,7 +114,16 @@ The agent reads the `.md`, references the `.pdf` in citations. The canonical key
 
 ### Concept clustering
 
-`--concept {path}` is a path hint that places files at `raw/{path}/`. Paths can be arbitrarily nested: `--concept machine-learning/attention` places files at `raw/machine-learning/attention/`. This resolves ambiguity (attention in ML vs attention in psychology) and supports natural domain hierarchies.
+`--concept {path}` is a path hint that places files at `raw/{path}/`. Paths are arbitrarily nested — any depth:
+
+```
+llm-wiki add-source paper.pdf --concept machine-learning
+llm-wiki add-source paper.pdf --concept machine-learning/attention
+llm-wiki add-source paper.pdf --concept machine-learning/attention/sparse
+llm-wiki add-source paper.pdf --concept biochemistry/rna/trna-charging
+```
+
+This resolves ambiguity (`machine-learning/attention` vs `psychology/attention`) and supports natural domain hierarchies without any upfront taxonomy registration.
 
 **Cluster is derived from path, not stored separately.** The `cluster` field in the DB is computed as the relative directory path from `raw/` or `wiki/`. Moving a file or directory automatically updates cluster membership — the daemon detects move events and updates `sources.path` and the derived cluster. No command, no ritual.
 
