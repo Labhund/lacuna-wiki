@@ -35,7 +35,7 @@ The skills directory is the schema. It is the most important part of the system 
 
 ### The daemon
 
-Pure file-watcher and DB sync engine. **Zero LLM calls.** Ever.
+Pure file-watcher and DB sync engine. **Zero generative LLM calls.** The daemon calls an embedding model (nomic-embed-text) for vector indexing — a deterministic, non-reasoning operation. It never calls a generative model, never reasons, never decides.
 
 On `wiki/` file change:
 1. Parse section structure → update `sections` (with `position` for ordering)
@@ -99,7 +99,7 @@ llm-wiki add-source https://arxiv.org/abs/1706.03762 [--concept {name}]
      raw/{concept}/{key}.bib   ← bibtex metadata
 7. Register in sources table (slug=key, path=raw/{concept}/{key}.pdf,
    published_date from bibtex, source_type=paper|preprint|etc.)
-8. Chunk .md → embed each chunk (nomic-embed-text) → store offsets + preview in source_chunks
+8. Chunk .md → embed each chunk (nomic-embed-text) → store offsets in source_chunks
    Chunking strategy by source type:
    - Paper/book: by heading (heading field = section title)
    - Whisper transcript: by timestamp window (heading = "[HH:MM:SS]")
@@ -263,6 +263,8 @@ Every claim in the wiki carries an implicit type based on how it was authored:
 | **Unverified** | No authoritative source yet | No — but flagged as unverified |
 | **Gap** | Known unknown — explicitly missing knowledge | No — `claim_sources.relationship = gap` when a source flags it |
 
+These types are agent conventions, not daemon-enforced categories. The daemon only sees citation markers — it extracts sentences containing `[[key.pdf]]` and is blind to uncited sentences. Source and Analysis claims are structurally identical in the DB; the distinction is in how the agent writes them. This guidance belongs in the ingest skill; it's placed here to document what the claims table represents.
+
 The Analysis/Unverified split prevents paraphrasing-bias: the agent cannot silently rewrite what a source says and make it look like direct evidence.
 
 ### Supersession
@@ -311,7 +313,7 @@ Pages are just pages. The agent writes them. No imposed structure, no page types
 - No frontmatter — v2 uses none. Metadata lives in the DB.
 - Cluster = relative directory path from `wiki/`
 
-The review paper quality is a **north star communicated in the skill as writing guidance** — not a mechanical property of the system. The ingest skill tells the agent: write like you're contributing to a review paper on this topic. The agent is intelligent; it structures content appropriately without being told how.
+The review paper quality is a **quality aspiration communicated in the skill as writing guidance** — not a mechanical property of the system. The ingest skill tells the agent: write like you're contributing to a review paper on this topic. The agent is intelligent; it structures content appropriately without being told how.
 
 A page that begins as one paragraph from one source and grows into a comprehensive multi-source document is not changing type. It is compounding. That is the entire point.
 
@@ -582,8 +584,8 @@ Four entry points:
 | Mode | Scope | Use case |
 |---|---|---|
 | `virgin` | `last_adversary_check IS NULL` | First pass after batch ingest |
-| `stale` | `last_adversary_check < [date]` | Re-evaluate after new sources registered |
-| `recency` | `checked_at` on relationship older than newest supporting source | Weekly hygiene |
+| `stale` | `last_adversary_check < MAX(sources.registered_at)` — any claim not checked since any new source was registered | After a batch add-source run |
+| `recency` | `last_adversary_check < MAX(sources.registered_at)` scoped to same cluster — claim not checked since a new source arrived in its domain | Weekly hygiene, domain-aware |
 | `page` | all claims on one page | Before citing that page heavily |
 | `claim` | single claim | Spot check |
 
@@ -749,7 +751,7 @@ Step 4 — Write
 Step 5 — File
   New wiki page or updated pages committed.
   Session is now citable: [[{date}-{slug}.md]]
-  (File lives in raw/sessions/ — same immutability contract as all sources)
+  (File lives in raw/{concept}/ alongside domain sources — same immutability contract as all sources)
 ```
 
 The output is a filed session (citable, dated, preserved) plus a wiki page (or updates to existing pages). The session serves as the source; the page is the synthesis.
