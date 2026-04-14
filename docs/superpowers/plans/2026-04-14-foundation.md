@@ -73,6 +73,9 @@ dependencies = [
 [project.scripts]
 llm-wiki = "llm_wiki.cli.main:cli"
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_wiki"]
 
@@ -113,7 +116,7 @@ cli.add_command(stop)
 - [ ] **Step 4: Install in editable mode**
 
 ```bash
-pip install -e ".[dev]" 2>/dev/null || pip install -e .
+pip install -e ".[dev]"
 ```
 
 - [ ] **Step 5: Verify entry point**
@@ -375,33 +378,30 @@ from __future__ import annotations
 
 import duckdb
 
-_TABLES = """
-CREATE TABLE IF NOT EXISTS pages (
+_TABLES = [
+    """CREATE TABLE IF NOT EXISTS pages (
     id            INTEGER PRIMARY KEY,
     slug          TEXT UNIQUE NOT NULL,
     path          TEXT NOT NULL,
     title         TEXT,
     cluster       TEXT,
     last_modified TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS sections (
+)""",
+    """CREATE TABLE IF NOT EXISTS sections (
     id           INTEGER PRIMARY KEY,
     page_id      INTEGER REFERENCES pages(id),
     position     INTEGER NOT NULL,
     name         TEXT NOT NULL,
     content_hash TEXT,
     token_count  INTEGER,
-    embedding    FLOAT[1024]
-);
-
-CREATE TABLE IF NOT EXISTS links (
+    embedding    FLOAT[768]
+)""",
+    """CREATE TABLE IF NOT EXISTS links (
     source_page_id INTEGER REFERENCES pages(id),
     target_slug    TEXT NOT NULL,
     PRIMARY KEY (source_page_id, target_slug)
-);
-
-CREATE TABLE IF NOT EXISTS sources (
+)""",
+    """CREATE TABLE IF NOT EXISTS sources (
     id             INTEGER PRIMARY KEY,
     slug           TEXT UNIQUE NOT NULL,
     path           TEXT NOT NULL,
@@ -410,28 +410,25 @@ CREATE TABLE IF NOT EXISTS sources (
     published_date DATE,
     registered_at  TIMESTAMP,
     source_type    TEXT
-);
-
-CREATE TABLE IF NOT EXISTS claims (
+)""",
+    """CREATE TABLE IF NOT EXISTS claims (
     id                   INTEGER PRIMARY KEY,
     page_id              INTEGER REFERENCES pages(id),
     section_id           INTEGER REFERENCES sections(id),
     text                 TEXT NOT NULL,
-    embedding            FLOAT[1024],
+    embedding            FLOAT[768],
     superseded_by        INTEGER REFERENCES claims(id),
     last_adversary_check TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS claim_sources (
+)""",
+    """CREATE TABLE IF NOT EXISTS claim_sources (
     claim_id        INTEGER REFERENCES claims(id),
     source_id       INTEGER REFERENCES sources(id),
     citation_number INTEGER,
     relationship    TEXT,
     checked_at      TIMESTAMP,
     PRIMARY KEY (claim_id, source_id)
-);
-
-CREATE TABLE IF NOT EXISTS source_chunks (
+)""",
+    """CREATE TABLE IF NOT EXISTS source_chunks (
     id          INTEGER PRIMARY KEY,
     source_id   INTEGER REFERENCES sources(id),
     chunk_index INTEGER NOT NULL,
@@ -439,17 +436,15 @@ CREATE TABLE IF NOT EXISTS source_chunks (
     start_line  INTEGER NOT NULL,
     end_line    INTEGER NOT NULL,
     token_count INTEGER,
-    embedding   FLOAT[1024]
-);
-"""
+    embedding   FLOAT[768]
+)""",
+]
 
 
 def init_db(conn: duckdb.DuckDBPyConnection) -> None:
     """Create all tables. Safe to call on an existing DB (CREATE IF NOT EXISTS)."""
-    for statement in _TABLES.strip().split(";"):
-        statement = statement.strip()
-        if statement:
-            conn.execute(statement)
+    for statement in _TABLES:
+        conn.execute(statement)
 ```
 
 - [ ] **Step 4: Write `src/llm_wiki/db/connection.py`**
@@ -515,9 +510,15 @@ def runner():
     return CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def no_mcp_wiring(monkeypatch):
+    """Prevent init tests from touching ~/.claude/mcp.json or ~/.hermes/config.yaml."""
+    monkeypatch.setattr("llm_wiki.cli.init._offer_mcp_config", lambda vault_root: None)
+
+
 def test_init_creates_wiki_and_raw_dirs(tmp_path, runner, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    result = runner.invoke(init, input="test-vault\n")
+    result = runner.invoke(init)
     assert result.exit_code == 0, result.output
     assert (tmp_path / "wiki").is_dir()
     assert (tmp_path / "raw").is_dir()
@@ -525,20 +526,20 @@ def test_init_creates_wiki_and_raw_dirs(tmp_path, runner, monkeypatch):
 
 def test_init_creates_git_repo(tmp_path, runner, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    runner.invoke(init, input="test-vault\n")
+    runner.invoke(init)
     assert (tmp_path / ".git").is_dir()
 
 
 def test_init_creates_database(tmp_path, runner, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    runner.invoke(init, input="test-vault\n")
+    runner.invoke(init)
     db = db_path(tmp_path)
     assert db.exists()
 
 
 def test_init_database_has_tables(tmp_path, runner, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    runner.invoke(init, input="test-vault\n")
+    runner.invoke(init)
     import duckdb
     conn = duckdb.connect(str(db_path(tmp_path)))
     tables = {r[0] for r in conn.execute(
@@ -550,22 +551,22 @@ def test_init_database_has_tables(tmp_path, runner, monkeypatch):
 
 def test_init_creates_gitignore(tmp_path, runner, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    runner.invoke(init, input="test-vault\n")
+    runner.invoke(init)
     assert (tmp_path / ".gitignore").exists()
 
 
 def test_init_is_idempotent(tmp_path, runner, monkeypatch):
     """Running init twice on the same directory must not raise."""
     monkeypatch.chdir(tmp_path)
-    r1 = runner.invoke(init, input="test-vault\n")
-    r2 = runner.invoke(init, input="test-vault\n")
+    r1 = runner.invoke(init)
+    r2 = runner.invoke(init)
     assert r1.exit_code == 0
     assert r2.exit_code == 0
 
 
 def test_init_vault_root_detectable_after_init(tmp_path, runner, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    runner.invoke(init, input="test-vault\n")
+    runner.invoke(init)
     assert find_vault_root(tmp_path) == tmp_path
 ```
 
@@ -604,10 +605,7 @@ def init(path: str) -> None:
     vault_root = Path(path).resolve()
 
     console.print("\n[bold]llm-wiki v2 — vault setup[/bold]\n")
-
-    # Vault name (cosmetic only — used in welcome message)
-    default_name = vault_root.name
-    name = click.prompt("Vault name", default=default_name)
+    console.print(f"  Initialising vault at [bold]{vault_root}[/bold]\n")
 
     if not vault_root.exists():
         vault_root.mkdir(parents=True)
@@ -987,7 +985,6 @@ Expected: all PASS. If any fail, fix before proceeding.
 ```bash
 cd /tmp && rm -rf smoke-vault && mkdir smoke-vault && cd smoke-vault
 llm-wiki init .
-# Enter "smoke-vault" when prompted for name
 # Answer Y/n for MCP config prompts as preferred
 llm-wiki status
 ```
@@ -1027,7 +1024,7 @@ git add -A && git commit -m "chore: plan 1 complete — foundation verified"
 ## Self-review notes
 
 - `relationship` column in `claim_sources`: the spec allows `supports | refutes | gap | NULL`. No CHECK constraint is added — the adversary skill enforces this at write time, not the DB. Deliberately omitted to avoid friction during development.
-- HNSW indexes (vss extension) are **not** in this plan. They are added in Plan 4 when search is wired up. The `embedding FLOAT[1024]` columns exist but are unindexed until then.
+- HNSW indexes (vss extension) are **not** in this plan. They are added in Plan 4 when search is wired up. The `embedding FLOAT[768]` columns exist but are unindexed until then.
 - `llm-wiki sync` (rebuild DB from markdown) is scaffolded in Plan 3 alongside the daemon, since the logic is the same.
 - `llm-wiki adversary-commit` is Plan 5.
 - v1 migration: not in scope. The onboarding path is the normal first-use workflow — `add-source` (Plan 2) + ingest skill (Plan 5).

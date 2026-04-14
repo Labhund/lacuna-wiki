@@ -187,7 +187,7 @@ sections (
     name            TEXT NOT NULL,
     content_hash    TEXT,
     token_count     INTEGER,
-    embedding       FLOAT[1024]          -- text-embedding model, section-level
+    embedding       FLOAT[768]          -- text-embedding model, section-level
 )
 
 links (
@@ -212,7 +212,7 @@ claims (
     page_id               INTEGER REFERENCES pages(id),
     section_id            INTEGER REFERENCES sections(id),
     text                  TEXT NOT NULL,       -- citation-anchored sentence, verbatim from page
-    embedding             FLOAT[1024],         -- ANN similarity for adversary targeting
+    embedding             FLOAT[768],         -- ANN similarity for adversary targeting
     superseded_by         INTEGER REFERENCES claims(id),
     last_adversary_check  TIMESTAMP            -- NULL = never evaluated; drives virgin targeting
 )
@@ -234,7 +234,7 @@ source_chunks (
     start_line      INTEGER NOT NULL,    -- offset into raw .md file
     end_line        INTEGER NOT NULL,
     token_count     INTEGER,
-    embedding       FLOAT[1024]          -- nomic-embed-text, same model as sections
+    embedding       FLOAT[768]          -- nomic-embed-text, same model as sections
     -- no preview column: computed at query time from start_line/end_line
 )
 ```
