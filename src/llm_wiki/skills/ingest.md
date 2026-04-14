@@ -7,13 +7,31 @@ description: Ingest a source (PDF, URL, note, transcript) into the wiki. Search 
 
 Ingest a source into the wiki. The source may be a registered PDF, URL, markdown note, or session transcript. This skill guides you from source to wiki pages, always searching before writing.
 
-**Prerequisite:** the source must be registered. If it isn't:
+---
+
+## Step 0 — Register the Source
 
 ```bash
-llm-wiki add-source raw/path/to/file.pdf
+llm-wiki add-source path/or/url   # no --concept yet
 ```
 
-Wait for the daemon to sync before proceeding.
+Note both output lines:
+```
+Read:    raw/path/to/key.md        ← read this in Step 1
+Cite as: [[key.ext]]               ← use this cite key in Step 3e — do not invent another
+```
+
+After Step 1, assign a concept:
+```bash
+llm-wiki move-source KEY --concept domain/subdomain
+```
+
+Shortcut: if the concept is obvious from the title before reading, pass `--concept` directly to `add-source` instead.
+
+Do not ingest a source you did not just register. Verify with:
+```bash
+llm-wiki status
+```
 
 ---
 
@@ -21,19 +39,17 @@ Wait for the daemon to sync before proceeding.
 
 Read the source in full. For local files: use the Read tool. For URLs: fetch the page.
 
-After reading, produce this structured output before creating any todos:
+Output this structure before creating any todos:
 
 ```
-## Main thesis: [one sentence — what is the source's central claim?]
-## Supporting evidence: [what they actually measured or demonstrated, at what scale — be specific: "270M 18-layer model", "benchmark X on dataset Y"]
-## Secondary insights: [things said in passing that are independently interesting — not supporting the thesis, just valuable]
-## Surprising / counter-consensus claims: [anything that flies against established knowledge — flag these explicitly]
-## Not worth a concept: [conscious exclusions — source-intrinsic reasons only: "too speculative", "assertion without evidence", "too tangential", "out of scope for this domain"]
+## Main thesis: [one sentence — the source's central claim]
+## Supporting evidence: [what was measured or demonstrated, at what scale — "270M 18-layer model", "benchmark X on dataset Y"]
+## Secondary insights: [things said in passing that are independently interesting — not the thesis, just valuable]
+## Surprising / counter-consensus claims: [anything that flies against established knowledge]
+## Not worth a concept: [what you are skipping and why — source-intrinsic reasons: "too speculative", "assertion without evidence", "too tangential", "out of scope"]
 ```
 
-The "Not worth a concept" row captures only source-quality exclusions — reasons that come from the source itself, not from wiki state. Wiki-coverage exclusions ("already well covered") cannot be known here; they are handled in Step 3d (DECIDE: "Same point → add citation to existing sentence"), after the agent has actually searched.
-
-The row is not optional — making non-inclusion an explicit act prevents the summarisation instinct from silently suppressing surprising asides. Secondary insights belong in todos, not in the margins.
+Fill every row. "Not worth a concept" is not optional — name your exclusions. Wiki-coverage exclusions ("already in wiki") do not belong here; you have not searched yet. Those decisions happen in Step 3d.
 
 ---
 
@@ -186,11 +202,3 @@ llm-wiki status
 | Source contradicts a newer claim | Note the discrepancy; do not supersede older by newer |
 | Source contradicts an older claim | Write new claim; confirm supersession with user |
 
----
-
-## Citation Format Rules
-
-- One citation anchor per claim: `[[key.pdf]]` at the end of the sentence.
-- Multiple sources for one claim: `claim text. [[key1.pdf]] [[key2.pdf]]`
-- Never add `|N` citation numbers — the daemon assigns them sequentially.
-- Key = the source slug from `add-source`. Extension matches the source file type: `.pdf`, `.md`, `.txt`.
