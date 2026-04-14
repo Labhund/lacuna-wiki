@@ -6,10 +6,15 @@ from pathlib import Path
 
 
 def get_connection(db_path: Path, readonly: bool = False) -> duckdb.DuckDBPyConnection:
-    """Open a DuckDB connection to the vault database.
+    """Open a DuckDB connection to the vault database."""
+    conn = duckdb.connect(str(db_path), read_only=readonly)
+    _load_extensions(conn)
+    return conn
 
-    readonly=True for skills scripts and status reads.
-    readonly=False (default) for the daemon and CLI write commands.
-    vss extension is loaded in Plan 4 when vector search is wired up.
-    """
-    return duckdb.connect(str(db_path), read_only=readonly)
+
+def _load_extensions(conn: duckdb.DuckDBPyConnection) -> None:
+    """Load required DuckDB extensions into this connection."""
+    try:
+        conn.execute("LOAD fts")
+    except Exception:
+        pass  # FTS not available — search degrades gracefully

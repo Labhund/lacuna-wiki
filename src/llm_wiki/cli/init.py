@@ -55,6 +55,12 @@ def init(path: str) -> None:
     state.mkdir(parents=True, exist_ok=True)
     db = db_path(vault_root)
     conn = get_connection(db)
+    # Install extensions (idempotent — safe to re-run, non-fatal if offline)
+    try:
+        conn.execute("INSTALL fts")
+        conn.execute("LOAD fts")
+    except Exception:
+        pass
     init_db(conn)
     conn.close()
     console.print(f"  [green]✓[/green] database ready at {db}")

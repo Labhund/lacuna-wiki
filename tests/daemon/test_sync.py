@@ -217,6 +217,18 @@ def test_sync_page_claim_relationship_preserved(vault, fake_embed):
     assert rel == "supports"
 
 
+def test_sync_page_builds_fts_index(vault, fake_embed):
+    vault_root, conn = vault
+    conn.execute("LOAD fts")
+    write_page(vault_root, "page.md", "# P\n\n## Methods\n\nAttention computes queries keys values.\n")
+    sync_page(conn, vault_root, Path("wiki/page.md"), fake_embed)
+    rows = conn.execute(
+        "SELECT id, fts_main_sections.match_bm25(id, 'queries') as s"
+        " FROM sections WHERE s IS NOT NULL"
+    ).fetchall()
+    assert len(rows) >= 1
+
+
 def test_sync_page_unknown_source_key_skips_claim_source(vault, fake_embed):
     vault_root, conn = vault
     write_page(vault_root, "page.md", "# P\n\nClaim. [[unknown2020.pdf]]\n")

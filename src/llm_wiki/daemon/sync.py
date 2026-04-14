@@ -44,6 +44,20 @@ def sync_page(
         conn.rollback()
         raise
 
+    _rebuild_fts(conn)
+
+
+def _rebuild_fts(conn: duckdb.DuckDBPyConnection) -> None:
+    """Rebuild FTS index on sections after a sync commit. Non-fatal on failure."""
+    try:
+        conn.execute("PRAGMA drop_fts_index('sections')")
+    except Exception:
+        pass  # index may not exist yet
+    try:
+        conn.execute("PRAGMA create_fts_index('sections', 'id', 'content')")
+    except Exception:
+        pass  # non-fatal
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
