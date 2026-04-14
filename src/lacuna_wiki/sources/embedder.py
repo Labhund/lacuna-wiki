@@ -9,14 +9,7 @@ _DEFAULT_URL = "http://localhost:8005"
 _DEFAULT_MODEL = "nomic-embed-text:v1.5"
 
 
-_BATCH_SIZE = 1
-# llama.cpp servers are often launched with -ub 1024 (physical batch size),
-# meaning the server rejects requests whose total token count exceeds that limit.
-# Sending one chunk at a time guarantees the per-request token count equals the
-# chunk length. Truncate to ~900 tokens (~3500 chars at 4 chars/token) to stay
-# safely under the 1024-token ubatch default.
-# For better throughput, restart llama.cpp with -ub 4096 and raise _BATCH_SIZE.
-_MAX_CHARS = 3500
+_BATCH_SIZE = 32
 
 
 @dataclass
@@ -81,7 +74,7 @@ def embed_texts(
 
     results: list[list[float]] = []
     for i in range(0, len(texts), _BATCH_SIZE):
-        batch = [t[:_MAX_CHARS] for t in texts[i : i + _BATCH_SIZE]]
+        batch = texts[i : i + _BATCH_SIZE]
         response = httpx.post(
             f"{url}/v1/embeddings",
             json={"model": model, "input": batch},
