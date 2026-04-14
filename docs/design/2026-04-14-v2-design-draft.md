@@ -38,13 +38,14 @@ The skills directory is the schema. It is the most important part of the system 
 Pure file-watcher and DB sync engine. **Zero LLM calls.** Ever.
 
 On `wiki/` file change:
-1. Parse section structure → update `sections`
+1. Parse section structure → update `sections` (with `position` for ordering)
 2. Re-embed changed sections only (content_hash diff) → update `sections.embedding`
 3. Parse wikilinks → update `links`
 4. Parse citation markers (`[[key.pdf]]`) → update `claims` + `claim_sources`
-   - Claim identity = hash of the authored sentence text (no citation numbers — they are never in the text)
+   - Claim identity = hash of the authored sentence text
    - If claim text unchanged: preserve existing `relationship` from adversary
    - If claim text changed: reset `relationship = NULL` (new claim, needs re-evaluation)
+   - Assign sequential citation numbers per page → stored in `claim_sources.citation_number`
 5. Update manifest
 
 On `raw/` or `wiki/` **move event**:
@@ -54,17 +55,15 @@ On `raw/` or `wiki/` **move event**:
 
 The daemon does not decide what to write. It does not summarise. It does not evaluate. It is infrastructure.
 
-**Citation format — agent writes:** `[[vaswani2017.pdf]]` — source key only, no path prefix, no number. The agent never invents filenames — it uses the canonical key printed by `llm-wiki add-source`.
+**Citation format:** `[[vaswani2017.pdf]]` — source key only, no path prefix, no number. The agent never invents filenames — it uses the canonical key printed by `llm-wiki add-source`. The daemon assigns sequential citation numbers in the DB only — never written back to the file. Numbered citations and the full bibliography appear in the MCP navigate response; the file stays clean.
 
-**Citation format — daemon writes back:** `[[vaswani2017.pdf|1]]` — the daemon assigns sequential numbers per page and writes the `|N` display alias back to the file. In Obsidian reading mode this renders as `1` (clickable, links to the PDF). The page reads as natural prose with numbered citations rather than a chain of raw filenames.
+**Obsidian resolution:** `[[vaswani2017.pdf]]` resolves to `raw/machine-learning/attention/vaswani2017.pdf` by filename match across the vault — no new file spawned. In Obsidian reading mode the link renders as `vaswani2017.pdf` (meaningful, clickable). The `.pdf` extension disambiguates from wiki page wikilinks.
 
-The daemon's write-back triggers a file change event. The daemon guards against loops by tracking files it just wrote — citation-number-only edits are ignored on the resulting change event.
+**Numbered display in Obsidian:** deferred. The clean option is an Obsidian plugin that reads a daemon-maintained sidecar (page-slug → citation-number map) and renders wikilinks as `[1]` in reading mode without touching the source files. This is a quality-of-life addition that does not affect the core architecture.
 
-**Claim hash:** computed on the authored sentence text with `|N` stripped — `[[vaswani2017.pdf|1]]` and `[[vaswani2017.pdf|3]]` hash identically. If only citation numbers change on a re-parse (e.g. a new citation inserted earlier in the page), existing `relationship` values are preserved.
+**Claim hash:** computed on the authored sentence text as written. No `|N` ever appears in the file, so the hash is always stable for a given sentence. If a sentence is semantically unchanged but rephrased, the hash changes and `relationship` resets to NULL — this is the correct tradeoff. Re-evaluation is cheap; silent false preservation would be worse.
 
-**Obsidian resolution:** `[[vaswani2017.pdf|1]]` resolves to `raw/machine-learning/attention/vaswani2017.pdf` by filename match across the vault — no new file spawned. The `.pdf` extension disambiguates from wiki page wikilinks.
-
-**Filename immutability contract:** filenames in `raw/` must not be renamed after registration (Obsidian's rename-and-update feature must not be used on `raw/` files). Moving files between directories is safe — the daemon updates paths automatically. Renaming breaks the slug→filename mapping.
+**Filename immutability contract:** filenames in `raw/` must not be renamed after registration. Moving files between directories is safe — the daemon updates paths automatically. Renaming breaks the slug→filename mapping.
 
 ### The harness
 
@@ -184,7 +183,8 @@ pages (
 sections (
     id              INTEGER PRIMARY KEY,
     page_id         INTEGER REFERENCES pages(id),
-    name            TEXT NOT NULL,       -- matches review paper structure below
+    position        INTEGER NOT NULL,    -- order within page, 0-indexed
+    name            TEXT NOT NULL,
     content_hash    TEXT,
     token_count     INTEGER,
     embedding       FLOAT[1024]          -- text-embedding model, section-level
@@ -192,7 +192,8 @@ sections (
 
 links (
     source_page_id  INTEGER REFERENCES pages(id),
-    target_slug     TEXT NOT NULL        -- may not resolve yet; daemon flags broken links
+    target_slug     TEXT NOT NULL,       -- may not resolve yet; daemon flags broken links
+    PRIMARY KEY (source_page_id, target_slug)
 )
 
 sources (
@@ -217,8 +218,9 @@ claims (
 claim_sources (
     claim_id        INTEGER REFERENCES claims(id),
     source_id       INTEGER REFERENCES sources(id),
-    citation_number INTEGER,             -- daemon-assigned sequential number per page/section
-    relationship    TEXT                 -- supports | refutes | gap
+    citation_number INTEGER,             -- daemon-assigned sequential number per page
+    relationship    TEXT,                -- supports | refutes | gap
+    PRIMARY KEY (claim_id, source_id)
 )
 
 source_chunks (
@@ -247,7 +249,7 @@ source_chunks (
   - `gap` — source identifies this as an open question; claim is a known unknown
 - **source_chunks**: the raw evidence layer. Source `.md` files chunked at `add-source` time, embeddings stored, offsets into the `.md` recorded. Full text lives in the `.md` only — the DB stores `start_line`/`end_line` and a short `preview` for search display. Permanently consistent: `raw/` files are immutable after registration, so offsets never go stale. No daemon involvement — `raw/` is write-once, `wiki/` is what the daemon watches.
 
-### Claim types (following n7-ved's pattern)
+### Claim types
 
 Every claim in the wiki carries an implicit type based on how it was authored:
 
@@ -472,12 +474,12 @@ No write contention because there is exactly one writer by design.
 
 Claims are extracted **deterministically** by the daemon on every file change. No LLM.
 
-The citation format `[[key.pdf|N]]` (after daemon write-back) is the claim marker. The daemon:
+The citation format `[[key.pdf]]` is the claim marker. The daemon:
 1. Sentence-splits the changed section
 2. Extracts sentences containing `[[*.pdf]]` markers
-3. Strips `|N` display alias → resolves key to `source_id` in sources table
-4. Hashes the sentence text with `|N` stripped — stable across citation renumbering
-5. Assigns sequential citation numbers per page; writes `|N` aliases back to the file
+3. Resolves each key to a `source_id` in the sources table (slug match)
+4. Hashes the sentence text — identity is stable for a given authored sentence
+5. Assigns sequential citation numbers per page → stored in DB only, never written to file
 6. If hash matches existing claim: preserve `relationship`. If new: insert with `relationship = NULL`.
 
 `relationship` (supports | refutes | gap) is populated by the adversary skill — a harness-driven, multi-turn LLM evaluation invoked explicitly by the user. The daemon never calls it.
@@ -511,11 +513,11 @@ It is not a product. It is not a shared platform. It is a research instrument tu
 **P7 — Intelligence is never automated.**
 The adversary skill runs when the researcher invokes it. Crystallisation of sessions happens when the researcher decides. No background LLM workers. No auto-resolution of contradictions. The researcher is always in the loop at judgment calls.
 
-**P9 — The files are the user's files.**
-The wiki sits passively on top of the file system. It adds value without adding friction, obscure rituals, or required workflows. The user can reorganise directories, edit in Obsidian, vim, or anything else, and the system adapts silently. No commands required to keep the DB in sync. No file format the user must understand to use the wiki. The only contract the user must honour is the citation format — everything else is the system's problem, not theirs.
-
 **P8 — Synthesised knowledge is compiled once.**
 No component re-derives what the wiki has already ingested. Each ingest call pays the LLM cost once; future sessions read compiled structure from DuckDB. Reading raw source material at query time (source_chunks, scope:"all") is the evidence layer working as designed — that is not re-derivation. Re-deriving synthesised knowledge is the failure mode: it signals the wiki is not doing its job.
+
+**P9 — The files are the user's files.**
+The wiki sits passively on top of the file system. It adds value without adding friction, obscure rituals, or required workflows. The user can reorganise directories, edit in Obsidian, vim, or anything else, and the system adapts silently. No commands required to keep the DB in sync. No file format the user must understand to use the wiki. The only contract the user must honour is the citation format — everything else is the system's problem, not theirs.
 
 ### Carried forward from v1
 
@@ -723,22 +725,50 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 
 ## What is Not In v2
 
-| Feature | Status |
+**Deferred to v3:**
+
+| Feature | Notes |
 |---|---|
-| Multimodal embeddings (images, figures) | Schema-ready (`source_type` + `claims.embedding` accommodate it), implementation v3 |
-| Adversary auto-run | Never automatic — explicitly invoked by researcher only |
-| Confidence scoring | Derivable from claim_sources when adversary populates relationship |
-| wiki_query (opaque answer box) | Removed — agent traverses directly |
-| wiki_ingest MCP tool | Removed — CLI + harness ingest skill |
-| Background LLM workers | None. Zero. |
-| Complex authority scoring | Replaced by `published_date` + recency logic |
-| Automatic contradiction resolution | Never automatic — adversary skill + human judgment |
+| Multimodal embeddings (images, figures) | Schema-ready (`source_type` + `claims.embedding` accommodate it) |
+| Numbered citation display in Obsidian | Needs Obsidian plugin reading daemon sidecar; does not affect core architecture |
+| Crystallise skill (full spec) | Outline exists; detailed flow and format TBD |
+
+**By design — not in any version:**
+
+| Feature | Reason |
+|---|---|
+| Adversary auto-run | P7 — researcher always in the loop at judgment calls |
+| Background LLM workers | P1 — daemon is zero LLM, intelligence lives in the harness |
+| Automatic contradiction resolution | P7 — adversary skill + human judgment only |
+| Complex authority scoring | P4 — no h-index, journal tier, or citation count |
+| wiki_query (opaque answer box) | Agent traverses directly — opaque synthesis hides the reasoning |
+| wiki_ingest MCP tool | CLI + harness ingest skill — MCP surface is navigation only |
+
+**Removed from v1:**
+
+| Feature | Replaced by |
+|---|---|
+| Background embedding workers | Daemon re-embeds on file change, nomic local |
+| Page type system | Pages are just pages — review quality is skill guidance |
+| Talk pages | Crystallise skill — sessions filed as citable sources |
 
 ---
 
 ## Open Questions
 
-1. **InfraNodus integration pattern**: agent calls it directly from harness, or a skill wraps it? Low priority given P8 — run over wiki pages (already compiled), not raw/.
+1. **InfraNodus integration pattern**: agent calls it directly from harness, or a skill wraps it? Low priority — run over wiki pages (compiled), not raw/.
+
+2. **MCP tool schema**: parameter table needed before implementation. `q`, `page`, `section`, `pages`, `scope` — mutual exclusivity rules, defaults, error behaviour when incompatible params combined.
+
+3. **Cluster prefix matching semantics**: `wiki_read_cluster("biochemistry")` — does it match exact cluster value or all pages whose cluster starts with `biochemistry/`? Prefix match is more useful but needs to be specified explicitly.
+
+4. **Daemon error recovery**: DB partially updated on crash. Rebuild from markdown via `llm-wiki sync`? Cost of re-embedding 3000 sections? Need a recovery story before implementation.
+
+5. **Embedding model migration**: when nomic-embed-text is replaced, all embeddings in sections and source_chunks are invalid. Migration path needed — bulk re-embed or rebuild DB from scratch?
+
+6. **Directory move batching**: inotify fires per-file events for directory moves. 50 files moved = 100 events. Daemon needs debounce/batch strategy to avoid processing each file individually during large reorganisations.
+
+7. **Fidelity fixes and P7**: the adversary silently edits pages for fidelity failures without user review. This is a judgment call the agent can get wrong. Options: (a) surface a diff to the user before writing, (b) add an explicit P7 exception for adversary fidelity corrections, (c) require user confirmation for all adversary writes. Needs a decision.
 
 ---
 
