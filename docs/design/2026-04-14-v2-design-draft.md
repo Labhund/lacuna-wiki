@@ -37,16 +37,26 @@ The skills directory is the schema. It is the most important part of the system 
 
 Pure file-watcher and DB sync engine. **Zero LLM calls.** Ever.
 
-On file change:
+On `wiki/` file change:
 1. Parse section structure → update `sections`
-2. Recompute section embeddings → update `sections.embedding`
+2. Re-embed changed sections only (content_hash diff) → update `sections.embedding`
 3. Parse wikilinks → update `links`
 4. Parse citation markers (`[[key.pdf]]`) → update `claims` + `claim_sources`
+   - Claim identity = hash of the authored sentence text (no citation numbers — they are never in the text)
+   - If claim text unchanged: preserve existing `relationship` from adversary
+   - If claim text changed: reset `relationship = NULL` (new claim, needs re-evaluation)
 5. Update manifest
+
+On `raw/` or `wiki/` **move event**:
+- Update `sources.path` / `pages.path`
+- Recompute `cluster` from new relative directory path
+- No content re-processing — content is immutable in `raw/`
 
 The daemon does not decide what to write. It does not summarise. It does not evaluate. It is infrastructure.
 
-**Citation format:** `[[vaswani2017.pdf]]` — source key only, no path prefix, no `|N` number. Obsidian resolves by shortest unique filename match. The daemon assigns sequential citation numbers as a derived DB field (per page, per section). The agent never invents filenames — it uses the canonical key printed by `llm-wiki add-source`.
+**Citation format:** `[[vaswani2017.pdf]]` — source key only, no path prefix, no `|N` number. Obsidian resolves by filename across the entire vault — `[[vaswani2017.pdf]]` resolves to `raw/machine-learning/attention/vaswani2017.pdf` without spawning a new file. Unresolved links appear as greyed-out nodes; Obsidian never auto-creates files for them. The `.pdf` extension disambiguates from wiki page wikilinks. The daemon assigns sequential citation numbers as a derived DB field. The agent never invents filenames — it uses the canonical key printed by `llm-wiki add-source`.
+
+**Filename immutability contract:** filenames in `raw/` must not be renamed after registration (Obsidian's rename-and-update feature must not be used on `raw/` files). Moving files between directories is safe — the daemon updates paths automatically. Renaming breaks the slug→filename mapping.
 
 ### The harness
 
@@ -96,29 +106,47 @@ The agent reads the `.md`, references the `.pdf` in citations. The canonical key
 
 ### Concept clustering
 
-`--concept {name}` organises all three files into `raw/{concept}/` and sets `cluster = {name}` on the source row. Wiki pages for that cluster live in `wiki/{concept}/`. The cluster field on pages is set by the ingest skill — not the daemon.
+`--concept {path}` is a path hint that places files at `raw/{path}/`. Paths can be arbitrarily nested: `--concept machine-learning/attention` places files at `raw/machine-learning/attention/`. This resolves ambiguity (attention in ML vs attention in psychology) and supports natural domain hierarchies.
 
-Cluster membership is the harness's judgment call, not a structural enforcement. The `cluster` field is advisory: it powers the `wiki_read_cluster` MCP call pattern and filters in SQL but does not gate anything.
+**Cluster is derived from path, not stored separately.** The `cluster` field in the DB is computed as the relative directory path from `raw/` or `wiki/`. Moving a file or directory automatically updates cluster membership — the daemon detects move events and updates `sources.path` and the derived cluster. No command, no ritual.
+
+This means:
+- Reorganising the file system later is safe and zero-friction
+- The directory structure IS the taxonomy — no separate concept registry
+- `add-source --concept` just sets the initial subdirectory
+
+Wiki pages follow the same pattern: `wiki/machine-learning/attention/sdpa.md` has cluster `machine-learning/attention`.
 
 ### Directory anatomy
 
 ```
 wiki/
-  {concept}/              ← authored pages by cluster (mutable, daemon watches)
-  ...
+  machine-learning/
+    attention/            ← cluster = machine-learning/attention
+      sdpa.md
+      multi-head.md
+  biochemistry/
+    trna/                 ← cluster = biochemistry/trna
+      charging.md
 raw/
-  {concept}/
-    vaswani2017.pdf
-    vaswani2017.md        ← parsed, agent reads this (immutable after add-source)
-    vaswani2017.bib
-  sessions/
-    2026-04-14-attn.md   ← crystallised session files live here
-  ...                     ← immutable after registration. Do not edit manually.
+  machine-learning/
+    attention/
+      vaswani2017.pdf
+      vaswani2017.md      ← parsed, agent reads this (immutable content)
+      vaswani2017.bib
+  biochemistry/
+    trna/
+      crick1966.pdf ...
+  sessions/               ← crystallised sessions
+    2026-04-14-attn.md
+  notes/                  ← human-authored notes, experiments
 ```
 
-Sessions, notes, and experiments are registered via `add-source` like any other source. They land in `raw/sessions/`, `raw/notes/`, or `raw/experiments/` — same immutability contract. The `sessions/` top-level directory in earlier versions of this doc is removed; everything goes through `raw/`.
+**Cluster = relative path from `wiki/` or `raw/`.** It is never authored — always derived. The user can reorganise directories freely; the daemon updates the DB silently.
 
-`raw/` is write-once. The daemon does not watch it. If a source needs reprocessing (e.g. better PDF parser), run `llm-wiki add-source --replace` which rewrites the files and recomputes source_chunks rows.
+**`raw/` content is immutable after registration.** The user can move files and directories — paths and cluster membership update automatically. But file content is not edited after `add-source`. To reprocess a source, run `llm-wiki add-source --replace`.
+
+Sessions, notes, and experiments all live under `raw/` in their respective subdirectories — same immutability contract as papers.
 
 ---
 
@@ -442,7 +470,7 @@ The citation format `[[key.pdf]]` is the claim marker. The daemon:
 
 Hard principles. These are not aspirations — they are design constraints. Anything that violates them gets cut.
 
-### Seven hard points
+### Eight hard points
 
 **P1 — The agent is the sole intelligence.**
 The daemon does not decide, summarise, or evaluate. Skills encode conventions. The harness is where reasoning happens. Automation of judgment is the failure mode, not a feature.
@@ -453,8 +481,8 @@ Every claim is a claim from a source. The wiki is a compiled record of what spec
 **P3 — The citation is the only hard contract.**
 `[[key.pdf]]` is the one syntactic commitment the agent makes. Everything else — section headings, callout markers, wikilinks — is convention, not requirement. The citation format is what makes the claims graph possible.
 
-**P4 — Recency beats authority.**
-No h-index, no journal tier, no citation count. The only authority signal is `published_date`. Newer evidence supersedes older evidence. The contradiction detection query is the mechanism.
+**P4 — No manual authority scoring.**
+No h-index, no journal tier, no citation count. Recency is a signal when evidence conflicts, not a rule — a foundational 2015 method paper is not demoted by a mediocre 2025 preprint. The adversary skill determines whether newer evidence actually supersedes. Supersession is the correction mechanism; recency is one input to that judgment.
 
 **P5 — Compounding is directional.**
 Pages move toward review quality, not away from it. A new source either adds to what's there or corrects it. Duplication is the failure mode. The ingest skill's commit→search→decide loop is the mechanism.
@@ -465,8 +493,8 @@ It is not a product. It is not a shared platform. It is a research instrument tu
 **P7 — Intelligence is never automated.**
 The adversary skill runs when the researcher invokes it. Crystallisation of sessions happens when the researcher decides. No background LLM workers. No auto-resolution of contradictions. The researcher is always in the loop at judgment calls.
 
-**P8 — The wiki gets cheaper over time; re-extraction doesn't.**
-Each ingest call pays the LLM cost once. That understanding is permanently encoded. Future sessions read compiled structure — the daemon serves it from DuckDB, zero LLM. Over a multi-year research arc the cost per insight falls as the wiki fills in. Tools that re-derive on demand (RAG, graphify over raw/) pay the extraction cost repeatedly. The wiki is the energy-efficient alternative because it compounds coherence rather than rebuilding it.
+**P8 — Synthesised knowledge is compiled once.**
+No component re-derives what the wiki has already ingested. Each ingest call pays the LLM cost once; future sessions read compiled structure from DuckDB. Reading raw source material at query time (source_chunks, scope:"all") is the evidence layer working as designed — that is not re-derivation. Re-deriving synthesised knowledge is the failure mode: it signals the wiki is not doing its job.
 
 ### Carried forward from v1
 
@@ -477,7 +505,7 @@ From `PHILOSOPHY.md` in the v1 repo:
 | LLM for understanding, code for bookkeeping | P13 | **Carried** — this is P1 above sharpened |
 | Rebuildable state directory | P9 | **Carried** — daemon rebuilds DB from markdown |
 | One source of truth | P3 (v1) | **Carried** — markdown files are truth, DB is derived |
-| Talk pages for uncertainty | P4 (v1) | **Open** — see Open Questions |
+| Talk pages for uncertainty | P4 (v1) | **Cut** — crystallise skill covers this |
 | Single-file pages | P6 (v1) | **Updated** — pages may span sections, no structural enforcement |
 | No scoring systems | P10 | **Carried** — recency only |
 | Human judgment for contradictions | P11 | **Carried** — adversary skill, not daemon |
