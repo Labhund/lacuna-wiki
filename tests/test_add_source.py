@@ -1,4 +1,4 @@
-"""Integration tests for llm-wiki add-source.
+"""Integration tests for lacuna add-source.
 
 Embedding calls are monkeypatched — these tests do not require a running server.
 PDF extraction is also monkeypatched — these tests do not require pdftotext.
@@ -10,9 +10,9 @@ import httpx
 from click.testing import CliRunner
 from pathlib import Path
 
-from llm_wiki.cli.add_source import add_source
-from llm_wiki.db.schema import init_db
-from llm_wiki.vault import db_path, state_dir_for
+from lacuna_wiki.cli.add_source import add_source
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.vault import db_path, state_dir_for
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def mock_embed(monkeypatch):
     """Replace embed_texts with a function that returns fake 768-dim vectors."""
     def fake_embed(texts, **kwargs):
         return [[0.1] * 768 for _ in texts]
-    monkeypatch.setattr("llm_wiki.cli.add_source.embed_texts", fake_embed)
+    monkeypatch.setattr("lacuna_wiki.cli.add_source.embed_texts", fake_embed)
 
 
 def _write_source(tmp_path, name="paper.md", content=None):
@@ -124,16 +124,31 @@ Transformers are a type of neural network architecture.
 The attention mechanism is central.
 """
 
-_JINA_ARXIV = """\
-Title: Attention Is All You Need
-URL Source: https://arxiv.org/abs/1706.03762
-Published Time: 2017-06-12
+_ARXIV_PDF_TEXT = """\
+Attention Is All You Need
 
 10.48550/arXiv.1706.03762
 
-## Abstract
+Abstract
 
 The dominant sequence transduction models...
+"""
+
+_BIORXIV_PDF_TEXT = """\
+Highly Accurate Protein Structure Prediction With AlphaFold
+
+10.1101/2021.10.04.463034
+
+Abstract
+
+Proteins are essential to life...
+"""
+
+_BIBTEX_BIORXIV = """@article{jumper2021highly,
+  title={Highly Accurate Protein Structure Prediction With AlphaFold},
+  author={Jumper, John and others},
+  year={2021}
+}
 """
 
 _BIBTEX = """@article{vaswani2017attention,
@@ -233,12 +248,13 @@ def test_add_url_source_output_contains_cite_as(vault, monkeypatch):
 
 
 @respx.mock
-def test_add_url_source_doi_uses_bibtex_key(vault, monkeypatch):
-    """When Jina content contains a DOI, the key is derived from bibtex author+year."""
+def test_add_arxiv_key_from_bibtex(vault, monkeypatch):
+    """arxiv URL downloads PDF directly and derives key from bibtex DOI."""
     monkeypatch.chdir(vault)
+    monkeypatch.setattr("lacuna_wiki.cli.add_source.extract_text", lambda _p: _ARXIV_PDF_TEXT)
     arxiv_url = "https://arxiv.org/abs/1706.03762"
-    respx.get(f"https://r.jina.ai/{arxiv_url}").mock(
-        return_value=httpx.Response(200, text=_JINA_ARXIV)
+    respx.get("https://arxiv.org/pdf/1706.03762").mock(
+        return_value=httpx.Response(200, content=b"%PDF fake")
     )
     respx.get(
         "https://api.crossref.org/works/10.48550/arXiv.1706.03762/transform/application/x-bibtex"
@@ -250,6 +266,130 @@ def test_add_url_source_doi_uses_bibtex_key(vault, monkeypatch):
     slug = conn.execute("SELECT slug FROM sources").fetchone()[0]
     conn.close()
     assert slug == "vaswani2017"
+
+
+@respx.mock
+def test_add_arxiv_html_meta_fallback(vault, monkeypatch):
+    """When CrossRef returns nothing, key/bib come from HTML citation_* meta tags."""
+    monkeypatch.chdir(vault)
+    monkeypatch.setattr("lacuna_wiki.cli.add_source.extract_text", lambda _p: "No DOI here.")
+    arxiv_url = "https://arxiv.org/abs/2201.02177"
+    respx.get("https://arxiv.org/pdf/2201.02177").mock(
+        return_value=httpx.Response(200, content=b"%PDF fake")
+    )
+    respx.get(
+        "https://api.crossref.org/works/10.48550/arXiv.2201.02177/transform/application/x-bibtex"
+    ).mock(return_value=httpx.Response(404))
+    _HTML = (
+        '<meta name="citation_author" content="Power, Alethea" />'
+        '<meta name="citation_author" content="Burda, Yuri" />'
+        '<meta name="citation_title" content="Grokking: Generalization Beyond Overfitting" />'
+        '<meta name="citation_date" content="2022/01/06" />'
+    )
+    respx.get(arxiv_url).mock(return_value=httpx.Response(200, text=_HTML))
+
+    result = CliRunner().invoke(add_source, [arxiv_url])
+    assert result.exit_code == 0, result.output
+    assert "[[power2022.pdf]]" in result.output
+
+    bib = (vault / "raw" / "power2022.bib").read_text()
+    assert "Power, Alethea" in bib
+    assert "Grokking" in bib
+    assert "2022" in bib
+
+
+@respx.mock
+def test_add_arxiv_doi_fallback_from_url(vault, monkeypatch):
+    """When PDF text has no DOI, arxiv DOI is constructed from the URL and tried against CrossRef."""
+    monkeypatch.chdir(vault)
+    # PDF text contains no DOI — just plain text
+    monkeypatch.setattr("lacuna_wiki.cli.add_source.extract_text", lambda _p: "No DOI here.\n\nAbstract text.")
+    arxiv_url = "https://arxiv.org/abs/1706.03762"
+    respx.get("https://arxiv.org/pdf/1706.03762").mock(
+        return_value=httpx.Response(200, content=b"%PDF fake")
+    )
+    respx.get(
+        "https://api.crossref.org/works/10.48550/arXiv.1706.03762/transform/application/x-bibtex"
+    ).mock(return_value=httpx.Response(200, text=_BIBTEX))
+
+    result = CliRunner().invoke(add_source, [arxiv_url])
+    assert result.exit_code == 0, result.output
+    assert "[[vaswani2017.pdf]]" in result.output
+
+
+@respx.mock
+def test_add_arxiv_type_is_preprint(vault, monkeypatch):
+    """arxiv source type defaults to preprint."""
+    monkeypatch.chdir(vault)
+    monkeypatch.setattr("lacuna_wiki.cli.add_source.extract_text", lambda _p: _ARXIV_PDF_TEXT)
+    arxiv_url = "https://arxiv.org/abs/1706.03762"
+    respx.get("https://arxiv.org/pdf/1706.03762").mock(
+        return_value=httpx.Response(200, content=b"%PDF fake")
+    )
+    respx.get(
+        "https://api.crossref.org/works/10.48550/arXiv.1706.03762/transform/application/x-bibtex"
+    ).mock(return_value=httpx.Response(200, text=_BIBTEX))
+
+    CliRunner().invoke(add_source, [arxiv_url])
+    conn = duckdb.connect(str(db_path(vault)))
+    src_type = conn.execute("SELECT source_type FROM sources").fetchone()[0]
+    conn.close()
+    assert src_type == "preprint"
+
+
+@respx.mock
+def test_add_arxiv_cite_ext_is_pdf(vault, monkeypatch):
+    """arxiv cite key uses .pdf extension."""
+    monkeypatch.chdir(vault)
+    monkeypatch.setattr("lacuna_wiki.cli.add_source.extract_text", lambda _p: _ARXIV_PDF_TEXT)
+    arxiv_url = "https://arxiv.org/abs/1706.03762"
+    respx.get("https://arxiv.org/pdf/1706.03762").mock(
+        return_value=httpx.Response(200, content=b"%PDF fake")
+    )
+    respx.get(
+        "https://api.crossref.org/works/10.48550/arXiv.1706.03762/transform/application/x-bibtex"
+    ).mock(return_value=httpx.Response(200, text=_BIBTEX))
+
+    result = CliRunner().invoke(add_source, [arxiv_url])
+    assert "[[vaswani2017.pdf]]" in result.output
+
+
+@respx.mock
+def test_add_biorxiv_key_from_bibtex(vault, monkeypatch):
+    """biorxiv URL downloads PDF via .full.pdf suffix and derives key from bibtex."""
+    monkeypatch.chdir(vault)
+    monkeypatch.setattr("lacuna_wiki.cli.add_source.extract_text", lambda _p: _BIORXIV_PDF_TEXT)
+    biorxiv_url = "https://www.biorxiv.org/content/10.1101/2021.10.04.463034v2"
+    respx.get(f"{biorxiv_url}.full.pdf").mock(
+        return_value=httpx.Response(200, content=b"%PDF fake")
+    )
+    respx.get(
+        "https://api.crossref.org/works/10.1101/2021.10.04.463034/transform/application/x-bibtex"
+    ).mock(return_value=httpx.Response(200, text=_BIBTEX_BIORXIV))
+
+    result = CliRunner().invoke(add_source, [biorxiv_url])
+    assert result.exit_code == 0, result.output
+    conn = duckdb.connect(str(db_path(vault)))
+    slug = conn.execute("SELECT slug FROM sources").fetchone()[0]
+    conn.close()
+    assert slug == "jumper2021"
+
+
+@respx.mock
+def test_add_biorxiv_cite_ext_is_pdf(vault, monkeypatch):
+    """biorxiv cite key uses .pdf extension."""
+    monkeypatch.chdir(vault)
+    monkeypatch.setattr("lacuna_wiki.cli.add_source.extract_text", lambda _p: _BIORXIV_PDF_TEXT)
+    biorxiv_url = "https://www.biorxiv.org/content/10.1101/2021.10.04.463034v2"
+    respx.get(f"{biorxiv_url}.full.pdf").mock(
+        return_value=httpx.Response(200, content=b"%PDF fake")
+    )
+    respx.get(
+        "https://api.crossref.org/works/10.1101/2021.10.04.463034/transform/application/x-bibtex"
+    ).mock(return_value=httpx.Response(200, text=_BIBTEX_BIORXIV))
+
+    result = CliRunner().invoke(add_source, [biorxiv_url])
+    assert "[[jumper2021.pdf]]" in result.output
 
 
 @respx.mock
@@ -384,7 +524,7 @@ def test_add_youtube_source_no_captions_exits_nonzero(vault, monkeypatch):
 # key_from_author_year
 # ---------------------------------------------------------------------------
 
-from llm_wiki.sources.key import key_from_author_year
+from lacuna_wiki.sources.key import key_from_author_year
 
 
 def test_key_from_author_year_basic():

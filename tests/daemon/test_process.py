@@ -2,14 +2,14 @@ import os
 import pytest
 from pathlib import Path
 
-from llm_wiki.daemon.process import write_pid, read_pid, is_running, _PID_FILE
+from lacuna_wiki.daemon.process import write_pid, read_pid, is_running, _PID_FILE
 
 
 @pytest.fixture(autouse=True)
 def clean_pid(tmp_path, monkeypatch):
     """Redirect PID file to tmp_path for test isolation."""
     fake_pid = tmp_path / "daemon.pid"
-    monkeypatch.setattr("llm_wiki.daemon.process._PID_FILE", fake_pid)
+    monkeypatch.setattr("lacuna_wiki.daemon.process._PID_FILE", fake_pid)
     yield fake_pid
     if fake_pid.exists():
         fake_pid.unlink()

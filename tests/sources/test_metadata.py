@@ -1,6 +1,6 @@
 import httpx
 import pytest
-from llm_wiki.sources.metadata import extract_doi, fetch_bibtex, parse_bibtex_fields
+from lacuna_wiki.sources.metadata import extract_doi, fetch_bibtex, parse_bibtex_fields
 
 
 def test_extract_doi_finds_doi_in_text():

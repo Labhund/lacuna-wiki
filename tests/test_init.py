@@ -2,8 +2,8 @@ import duckdb
 import pytest
 from click.testing import CliRunner
 
-from llm_wiki.cli.init import init
-from llm_wiki.vault import db_path, find_vault_root
+from lacuna_wiki.cli.init import init
+from lacuna_wiki.vault import db_path, find_vault_root
 
 
 @pytest.fixture
@@ -14,7 +14,7 @@ def runner():
 @pytest.fixture(autouse=True)
 def no_mcp_wiring(monkeypatch):
     """Prevent init tests from touching ~/.claude/mcp.json or ~/.hermes/config.yaml."""
-    monkeypatch.setattr("llm_wiki.cli.init._offer_mcp_config", lambda vault_root: None)
+    monkeypatch.setattr("lacuna_wiki.cli.init._offer_mcp_config", lambda vault_root: None)
 
 
 def test_init_creates_wiki_and_raw_dirs(tmp_path, runner, monkeypatch):

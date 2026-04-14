@@ -1,4 +1,4 @@
-# llm-wiki v2 — Design Draft
+# lacuna v2 — Design Draft
 
 > Design spec. Captures all decisions to date. Open questions noted explicitly.
 
@@ -38,16 +38,17 @@ The skills directory is the schema. It is the most important part of the system 
 Pure file-watcher and DB sync engine. **Zero generative LLM calls.** The daemon calls an embedding model (nomic-embed-text) for vector indexing — a deterministic, non-reasoning operation. It never calls a generative model, never reasons, never decides.
 
 On `wiki/` file change:
-1. Parse section structure → update `sections` (with `position` for ordering)
-2. Re-embed changed sections only (content_hash diff) → update `sections.embedding`
-3. Parse wikilinks → update `links`
-4. Parse citation markers (`[[key.pdf]]`) → update `claims` + `claim_sources`
+1. Parse frontmatter (if present) → update `pages.tags`
+2. Parse section structure (body below frontmatter only) → update `sections` (with `position` for ordering)
+3. Re-embed changed sections only (content_hash diff) → update `sections.embedding`
+4. Parse wikilinks → update `links`
+5. Parse citation markers (`[[key.pdf]]`) → update `claims` + `claim_sources`
    - Claim identity = hash of the authored sentence text
    - If claim text unchanged: preserve existing `relationship` from adversary
    - If claim text changed: reset `relationship = NULL` (new claim, needs re-evaluation)
    - Embed claim text (nomic-embed-text, same model as sections) → `claims.embedding`
    - Assign sequential citation numbers per (page, source) pair → stored in `claim_sources.citation_number`
-5. Update manifest
+6. Write `created`/`updated` dates back into frontmatter (if body changed); update manifest
 
 On `raw/` or `wiki/` **move event**:
 - Update `sources.path` / `pages.path`
@@ -56,7 +57,7 @@ On `raw/` or `wiki/` **move event**:
 
 The daemon does not decide what to write. It does not summarise. It does not evaluate. It is infrastructure.
 
-**Citation format:** `[[vaswani2017.pdf]]` — source key only, no path prefix, no number. The agent never invents filenames — it uses the canonical key printed by `llm-wiki add-source`. The daemon assigns sequential citation numbers in the DB only — never written back to the file. Numbered citations and the full bibliography appear in the MCP navigate response; the file stays clean.
+**Citation format:** `[[vaswani2017.pdf]]` — source key only, no path prefix, no number. The agent never invents filenames — it uses the canonical key printed by `lacuna add-source`. The daemon assigns sequential citation numbers in the DB only — never written back to the file. Numbered citations and the full bibliography appear in the MCP navigate response; the file stays clean.
 
 **Obsidian resolution:** `[[vaswani2017.pdf]]` resolves to `raw/machine-learning/attention/vaswani2017.pdf` by filename match across the vault — no new file spawned. In Obsidian reading mode the link renders as `vaswani2017.pdf` (meaningful, clickable). The `.pdf` extension disambiguates from wiki page wikilinks.
 
@@ -78,11 +79,11 @@ Explorations compound into the knowledge base just like ingested sources do. Whe
 
 ## Source Registration CLI
 
-**`llm-wiki add-source`** — the only way sources enter the wiki. Eliminates filename invention by the agent.
+**`lacuna add-source`** — the only way sources enter the wiki. Eliminates filename invention by the agent.
 
 ```
-llm-wiki add-source path/to/paper.pdf [--concept {name}]
-llm-wiki add-source https://arxiv.org/abs/1706.03762 [--concept {name}]
+lacuna add-source path/to/paper.pdf [--concept {name}]
+lacuna add-source https://arxiv.org/abs/1706.03762 [--concept {name}]
 ```
 
 **Pipeline:**
@@ -117,10 +118,10 @@ The agent reads the `.md`, references the `.pdf` in citations. The canonical key
 `--concept {path}` is a path hint that places files at `raw/{path}/`. If omitted, files go to `raw/` root. Paths are arbitrarily nested — any depth:
 
 ```
-llm-wiki add-source paper.pdf --concept machine-learning
-llm-wiki add-source paper.pdf --concept machine-learning/attention
-llm-wiki add-source paper.pdf --concept machine-learning/attention/sparse
-llm-wiki add-source paper.pdf --concept biochemistry/rna/trna-charging
+lacuna add-source paper.pdf --concept machine-learning
+lacuna add-source paper.pdf --concept machine-learning/attention
+lacuna add-source paper.pdf --concept machine-learning/attention/sparse
+lacuna add-source paper.pdf --concept biochemistry/rna/trna-charging
 ```
 
 This resolves ambiguity (`machine-learning/attention` vs `psychology/attention`) and supports natural domain hierarchies without any upfront taxonomy registration.
@@ -162,7 +163,7 @@ raw/
 
 **Cluster = relative path from `wiki/` or `raw/`.** It is never authored — always derived. The user can reorganise directories freely; the daemon updates the DB silently.
 
-**`raw/` content is immutable after registration.** The user can move files and directories — paths and cluster membership update automatically. But file content is not edited after `add-source`. To reprocess a source, run `llm-wiki add-source --replace`.
+**`raw/` content is immutable after registration.** The user can move files and directories — paths and cluster membership update automatically. But file content is not edited after `add-source`. To reprocess a source, run `lacuna add-source --replace`.
 
 ---
 
@@ -177,7 +178,10 @@ pages (
     path            TEXT NOT NULL,
     title           TEXT,
     cluster         TEXT,
-    last_modified   TIMESTAMP
+    tags            TEXT,                -- JSON array of tag strings, NULL if none; extracted from frontmatter
+    body_hash       TEXT,                -- SHA-256 prefix of body text (below frontmatter); used to skip re-embed on frontmatter-only changes
+    created_at      TIMESTAMP,           -- first sync; written into frontmatter as `created`
+    last_modified   TIMESTAMP            -- last body change; written into frontmatter as `updated`
 )
 
 sections (
@@ -246,7 +250,10 @@ Two constraints discovered while writing integration tests against DuckDB 1.5.x:
 **1. `claims.section_id` is a plain `INTEGER`, not a FK.**
 When `_sync_sections` deletes and re-inserts section rows (sections are replaced on every sync), DuckDB checks all FK constraints referencing the `claims` table — including `claim_sources.claim_id REFERENCES claims(id)` — even though `claim_sources` is unrelated to the sections deletion. The engine incorrectly blocks any statement that touches a table involved in the FK graph, not just the constraint being violated. Removing the `REFERENCES sections(id)` from `section_id` avoids this. `section_id` is informational anyway (tells you which section a claim was parsed from); database-enforced referential integrity adds no value here.
 
-**2. `_delete_page` runs outside a transaction (auto-commit per statement).**
+**2. `claims.superseded_by` is a plain `INTEGER`, not a self-referential FK.**
+Same root cause as above: `UPDATE claims SET superseded_by=?` triggers FK checks for all constraints referencing `claims`, including `claim_sources.claim_id REFERENCES claims(id)`. Since `claim_sources` still holds rows for the old claim, the engine raises a constraint violation even though no FK is actually being violated. `superseded_by` is navigational metadata read by skills; DB-enforced referential integrity is not needed.
+
+**3. `_delete_page` runs outside a transaction (auto-commit per statement).**
 Inside an explicit `conn.begin()` / `conn.commit()` block, DuckDB FK checks use the *pre-transaction committed state* of child tables, not the current transaction's view. This means deleting child rows (sections, claims, claim_sources) and then deleting the parent (pages) in the same transaction raises a FK violation even though the children are gone in the current snapshot. Fix: let each `DELETE` in `_delete_page` auto-commit individually. The upsert path (insert/update for existing pages) keeps its transaction wrapper — only the delete path is affected.
 
 ### Why each table
@@ -315,13 +322,35 @@ This is a skill script, not daemon behaviour. The daemon never evaluates claim r
 
 ## Pages
 
-Pages are just pages. The agent writes them. No imposed structure, no page types, no promotion events, no frontmatter. The extra burden of deciding what kind of page to write is eliminated — the only question is what to write and where.
+Pages are just pages. The agent writes them. No imposed structure, no page types, no promotion events. The extra burden of deciding what kind of page to write is eliminated — the only question is what to write and where.
 
 **Conventions:**
 - `slug` = filename without `.md` (e.g. `scaled-dot-product-attention`)
 - `title` = first `# heading` in the file
-- No frontmatter — v2 uses none. Metadata lives in the DB.
+- Frontmatter: optional YAML block before the body — tags only (see amendment below)
 - Cluster = relative directory path from `wiki/`
+
+> **Amendment (2026-04-14) — Frontmatter for tags and dates:**
+> Pages may have a YAML frontmatter block. Frontmatter is not body content — it is a lightweight metadata layer. Everything below the closing `---` is the body, unchanged. The daemon writes `created` and `updated` back into the frontmatter automatically after every body change — no ritual required.
+>
+> ```markdown
+> ---
+> tags: [attention, transformers, deep-learning]
+> created: 2026-04-14
+> updated: 2026-04-14
+> ---
+>
+> # scaled-dot-product-attention
+>
+> ...
+> ```
+>
+> **Fields:**
+> - `tags` — optional, user-authored. Inline YAML array of strings. Enables thematic grouping across clusters. Stored in `pages.tags` (JSON).
+> - `created` — YYYY-MM-DD. Set by the daemon on first body sync; never changed. Stored in `pages.created_at`.
+> - `updated` — YYYY-MM-DD. Set by the daemon after every body change. Stored in `pages.last_modified`.
+>
+> The daemon distinguishes body changes from frontmatter-only changes using a `body_hash` stored in `pages`. If the body hash is unchanged on a watchdog event, the daemon skips re-embedding and re-parsing — it only updates tags (if changed) and writes the frontmatter back. This makes the writeback loop idempotent: the daemon writes dates → watchdog fires → body hash matches → early exit. Tags and unknown frontmatter keys are the user's domain; `created`/`updated` are the daemon's domain.
 
 The review paper quality is a **quality aspiration communicated in the skill as writing guidance** — not a mechanical property of the system. The ingest skill tells the agent: write like you're contributing to a review paper on this topic. The agent is intelligent; it structures content appropriately without being told how.
 
@@ -375,14 +404,25 @@ Step 2 — Create todos and pause for feedback
 Step 3 — For each todo (loop):
   a. COMMIT — agent says out loud:
      "I am going to write about [X]: [one sentence].
+      Concepts I will link: [[slug-a]], [[slug-b]], [[slug-c]].
       But first I will search the wiki for similar content."
+
+     Three forcing functions in one statement:
+     1. The one sentence generates the search query — articulating it first
+        makes the next search more precise than a bare concept name.
+     2. The slug list normalises link targets before writing a single word.
+        Declaring [[kv-cache]] upfront prevents [[KV Cache]], [[kv cache]],
+        [[key-value-cache]] drift across a session. Undeclared concepts do
+        not appear as wikilinks — completeness is forced before writing.
+     3. If a slug doesn't exist yet: note it, create that page later in the
+        session (or in a subsequent ingest).
 
   b. SEARCH — wiki tool: {"q": "[one sentence summary]", "scope": "all"}
      The summary is a better query than the concept name alone.
      scope: "all" surfaces both compiled wiki sections and source chunks from
      registered-but-not-yet-ingested sources — catches relevant material early.
 
-  c. READ — for any close matches (score > threshold):
+  c. READ — for any close match (score > 0.7):
      Read the matched section (file tools or MCP navigate).
      Check: same claim? slight nuance? contradiction?
 
@@ -394,10 +434,30 @@ Step 3 — For each todo (loop):
      - Surface the decision to the user if judgment call is non-obvious
 
   e. WRITE — file tools (Edit/Write). Daemon syncs automatically.
+     Link verification: confirm every concept from the commit declaration
+     appears as a [[wikilink]] in the written text. Declared but missing = error.
 
   f. MARK COMPLETE — tick the todo
 
-Step 4 — Done when todo list is empty
+Step 4 — Editorial pass (after all todos are ticked)
+  Read back each page written or edited this session. Editorial only — not
+  epistemic. Three sub-steps:
+
+  a. LINKS — for each concept mentioned by name that is not already a
+     [[wikilink]]: does a page exist for it? Wrap first mention as [[slug]].
+
+  b. PLACEMENT — does each claim belong on the page it is on?
+     Misrouted content: cut and move. Dense sections (≥3 sources): offer to
+     promote to their own page.
+
+  c. FLAG FOR ADVERSARY — for sentences where claim and source intent feel
+     misaligned, add:
+       <!-- TODO: adversary check -->
+     Do not rewrite or re-search. Flag and move on.
+
+Step 5 — Done
+  Report: "Ingested [N] concepts from [source slug].
+           [N] pages updated, [N] created. [N] links added."
 ```
 
 The commit step is forced chain-of-thought at decision boundaries. The agent generates the articulation of intent, which becomes part of its own context window and measurably improves the quality of the downstream search query and decision. In LLM-land, generating the statement IS the reasoning step — the output is the mechanism, not documentation of it. The user can interrupt at any commit; that is a side benefit, not the purpose.
@@ -481,11 +541,11 @@ Note: `Open Questions (0 tok — empty)` surfaces a gap without any additional t
 
 | Capability | Mechanism |
 |---|---|
-| Status, health, sync state | `llm-wiki status` CLI or skills script |
+| Status, health, sync state | `lacuna status` CLI or skills script |
 | SQL queries (claims, contradictions, supersession) | Skills scripts — read-only DuckDB connection |
 | Source ingest, claim extraction | CLI + harness ingest skill |
 | Page writes | Harness file tools (Edit/Write) |
-| Adversary result commits | `llm-wiki adversary-commit` CLI — pauses daemon, writes relationship + timestamps |
+| Adversary result commits | `lacuna adversary-commit` CLI — pauses daemon, writes relationship + timestamps |
 | Concept graph / gap detection | InfraNodus MCP server (separate tool) |
 | Lint, audit, git | CLI |
 
@@ -496,7 +556,7 @@ Note: `Open Questions (0 tok — empty)` surfaces a gap without any additional t
 - Daemon: holds the single DuckDB read-write connection. Derives all DB state from file content.
 - Skills scripts: open DuckDB read-only. Multiple concurrent readers supported by DuckDB.
 - Harness: never opens DuckDB directly. Reads via MCP tool or skills scripts. Writes files via file tools.
-- CLI write commands (`llm-wiki adversary-commit`): pause the daemon briefly, open DuckDB read-write, write results, close, daemon resumes. Used for adversary results (relationship, timestamps) which have no markdown representation and cannot be derived by the daemon from file changes.
+- CLI write commands (`lacuna adversary-commit`): pause the daemon briefly, open DuckDB read-write, write results, close, daemon resumes. Used for adversary results (relationship, timestamps) which have no markdown representation and cannot be derived by the daemon from file changes.
 
 **Daemon pause mechanism:** CLI sends SIGUSR1 to daemon process. Daemon finishes in-flight event, releases DuckDB connection, acknowledges. CLI writes, closes connection, signals done. Daemon re-acquires. Total pause: milliseconds. Acceptable for an infrequently-run adversary on a personal tool.
 
@@ -645,7 +705,7 @@ Step 2 — For each claim (todo loop):
 
 Step 3 — Commit + Report
   Batch-commit all relationship verdicts accumulated in Step 2:
-    llm-wiki adversary-commit \
+    lacuna adversary-commit \
       --verdict claim_id=42,rel=supports,checked_at=... \
       --verdict claim_id=17,rel=refutes,checked_at=...  \
       ...
@@ -727,6 +787,101 @@ URL input   → fetch + readability/jina → .md, extract date from page metadat
 
 `published_date` = date the reasoning occurred, not the date it was filed. A session from April 2026 filed in May 2026 has `published_date = 2026-04-14`. This matters for recency-based contradiction detection.
 
+### URL source pipeline (implemented)
+
+```
+1. Fetch via Jina reader: GET https://r.jina.ai/{url}
+   Returns clean markdown with structured headers:
+     Title: ...
+     Published Time: ...
+     (body)
+
+2. DOI detection: scan first 4000 chars for DOI patterns
+   If found → CrossRef fetch → bibtex → parse title/authors/year
+   Key: {firstauthorlastname}{year} (same as paper pipeline)
+   If not found → URL segment key (see below)
+
+3. URL segment key derivation:
+   - Take last non-empty path segment (e.g. "the-transformer-family-v2")
+   - Strip leading YYYY-MM-DD- date prefix (blog slugs)
+   - Slugify: lowercase, strip non-alphanumeric, truncate to 40 chars
+   - Disambiguate: append 'b', 'c', ... if slug already registered
+   - YouTube: extract ?v= video ID from query string instead of path
+
+4. Metadata priority:
+   CLI flags > bibtex > Jina headers (title, published_time)
+
+5. Files written:
+   raw/{concept}/{key}.md        ← Jina markdown (immutable after registration)
+   raw/{concept}/{key}.bib       ← bibtex (only if DOI found)
+```
+
+### YouTube source pipeline (implemented)
+
+```
+1. Detect YouTube URL: youtube.com/watch or youtu.be/
+2. yt-dlp subtitle download:
+   - Prefer manual captions; fall back to auto-generated
+   - Download VTT format (smaller, structured)
+   - Strip t= timestamp parameter from URL before download
+3. VTT parse + sliding-window deduplication:
+   - Extract (timestamp, text) pairs from VTT cues
+   - Auto-generated captions use overlapping 5-word windows → tripled lines
+   - _strip_overlap: find longest prefix-suffix word match between consecutive
+     cues; append only new words. Streaming, not set-based.
+4. Key derivation: slugify title (video title from yt-dlp info), up to 60 chars.
+   Fallback: YouTube video ID if no title.
+5. Metadata: title, channel (authors), upload_date from yt-dlp info dict.
+6. File written: raw/{concept}/{key}.md (heading-chunked markdown transcript)
+   source_type = "transcript"
+```
+
+Faster-whisper (audio → text) is deferred to v3. Subtitle download covers YouTube content adequately and requires no GPU inference.
+
+---
+
+## Vault Configuration
+
+**`.lacuna.toml`** — optional vault-level config file. Lives at `{vault_root}/.lacuna.toml`. Written by `lacuna init` with defaults; edit to point at a non-default embedding server or model.
+
+```toml
+[embed]
+url = "http://localhost:8005"
+model = "nomic-embed-text:v1.5"
+```
+
+**Priority (lowest to highest):**
+1. Built-in defaults (`http://localhost:8005`, `nomic-embed-text:v1.5`)
+2. `.lacuna.toml` values
+3. Environment variables (`LACUNA_EMBED_URL`, `LACUNA_EMBED_MODEL`)
+
+Config is loaded at process start in every CLI command that calls the embedding model. The daemon loads it at startup. The config is not re-read on file change — restart the daemon to pick up config changes.
+
+---
+
+## Skills Install
+
+**`lacuna install-skills`** — copies the built-in skills into the harness skills directory.
+
+```bash
+lacuna install-skills            # installs to ~/.claude/skills/ (Claude Code default)
+lacuna install-skills --claude-global   # explicit Claude Code global skills dir
+lacuna install-skills --path /path/to/skills/dir   # arbitrary target
+```
+
+Each skill is copied into its own subdirectory:
+```
+~/.claude/skills/
+  lacuna-ingest/
+    SKILL.md
+  lacuna-adversary/
+    SKILL.md
+```
+
+Claude Code discovers skills from subdirectories in its skills path. Run `install-skills` after `init` and after any `lacuna` upgrade that ships skill changes.
+
+**Note for Hermes:** skill discovery ignores symlinks — `install-skills` copies real files, not links. If using Hermes alongside Claude Code, point `--path` at the Hermes skills directory separately.
+
 ---
 
 ## Crystallise Skill
@@ -754,7 +909,7 @@ Step 3 — Dialogue
 
 Step 4 — Write
   File session as source: raw/{concept}/{date}-{slug}.md
-  Register via: llm-wiki add-source raw/{concept}/{date}-{slug}.md --type session
+  Register via: lacuna add-source raw/{concept}/{date}-{slug}.md --type session
   .md input skips PDF parsing and bibtex fetch — the CLI registers directly and chunks for source_chunks.
   Update existing pages or create new page — same commit→search→decide loop as ingest.
 
@@ -788,6 +943,8 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 | Complex authority scoring | P4 — no h-index, journal tier, or citation count |
 | wiki_query (opaque answer box) | Agent traverses directly — opaque synthesis hides the reasoning |
 | wiki_ingest MCP tool | CLI + harness ingest skill — MCP surface is navigation only |
+| Status field / lifecycle stages | Rejected — ritualistic, adds friction. Pages simply mature through compounding; the content is the signal, not a label. |
+| Adversary link scan | Rejected — mode contamination. The adversary is a prosecutor, not an editor. Mixing epistemic and editorial passes dilutes both. |
 
 **Removed from v1:**
 
@@ -807,7 +964,7 @@ MCP-level tests run in a **separate Claude Code window** from the implementation
 
 1. **Embedding server** — `ollama serve` with `nomic-embed-text` pulled. Daemon and `add-source` both call `http://localhost:8005`.
 2. **Test vault** — `tests/fixtures/wiki-vault/` (committed, with real `.md` pages and at least one registered source). The daemon is pointed at this vault.
-3. **Daemon** — `llm-wiki start` from inside the test vault. Confirms watchdog + initial sync work end-to-end.
+3. **Daemon** — `lacuna start` from inside the test vault. Confirms watchdog + initial sync work end-to-end.
 4. **MCP server** — registered in the test session's Claude Code config pointing at the test vault DB.
 5. **Skills** — ingest skill, adversary skill (and any others) installed in the test session.
 
@@ -836,7 +993,7 @@ MCP-level tests run in a **separate Claude Code window** from the implementation
 
 3. **Cluster prefix matching**: **resolved** — prefix match. `WHERE cluster = ? OR cluster LIKE ? || '/%'`. Root edge case: pages directly in `wiki/` have `cluster = NULL`, returned when root is queried.
 
-4. **Daemon error recovery**: DB partially updated on crash. Rebuild from markdown via `llm-wiki sync`? Cost of re-embedding 3000 sections if embedding server is down? Connection recovery on daemon restart?
+4. **Daemon error recovery**: DB partially updated on crash. Rebuild from markdown via `lacuna sync`? Cost of re-embedding 3000 sections if embedding server is down? Connection recovery on daemon restart?
 
 5. **Embedding model migration**: when nomic-embed-text is replaced, all embeddings are invalid. Bulk re-embed or rebuild DB?
 
@@ -844,17 +1001,17 @@ MCP-level tests run in a **separate Claude Code window** from the implementation
 
 7. **Fidelity fixes and P7**: **resolved** — silent fixes during adversary run, collected and reported at Step 3 as an informational list ("Fixed: [page › section] — [one sentence reason]"). Researcher asked for corrections by invoking the skill; the end-of-run report is the audit trail. Git diff is the revert mechanism. Supersession still requires explicit user confirmation.
 
-8. **BM25 + vector score combination**: weighted sum or reciprocal rank fusion for hybrid search? Affects result quality and tuning.
+8. **BM25 + vector score combination**: **resolved** — Reciprocal Rank Fusion (RRF). Each search backend returns its ranked list; scores are `1/(k + rank)` summed per chunk (k=60). Vector hits are gated by a minimum cosine similarity floor (`_VEC_MIN_SCORE = 0.45`) before RRF to prevent semantically unrelated chunks from polluting results with low scores. BM25 has no equivalent floor since term-match absence means no hit, not a low-score hit.
 
 9. **Semantically close sections in navigate response**: **resolved** — on-the-fly ANN query against `sections.embedding` at navigate time, using DuckDB vss HNSW index. Always fresh, no cache invalidation. DuckDB vss handles this natively; latency acceptable for a personal tool serving one researcher.
 
 10. **Sentence splitter for claim extraction**: claim boundaries are citation-anchored, reducing (not eliminating) the sentence-split problem. Still need a defined strategy for parsing within citation boundaries — markdown callouts with `>` prefix, equation blocks, code blocks may cause false boundaries. Library or regex TBD.
 
-11. **Embedding serving mechanism**: how does the daemon call nomic-embed-text? HTTP endpoint (Ollama/llama.cpp server)? Python library import? What happens if GPU is busy? Does embedding block or queue?
+11. **Embedding serving mechanism**: **resolved** — HTTP endpoint (OpenAI-compatible `/v1/embeddings`). Default: `http://localhost:8005` (Ollama). Model: `nomic-embed-text:v1.5`. Both configurable via vault config (`.lacuna.toml`) or env var overrides. Batching: 32 texts per HTTP request to respect server limits. If the embedding server is unavailable, `add-source` and daemon re-embed both fail visibly — no silent degradation. GPU contention is the embedding server's problem, not the wiki's.
 
 12. **Git integration**: "git as audit trail" is in the diagram. Who commits — daemon or harness? When? What format for commit messages? If harness commits (agent responsibility), the skill needs to encode the convention.
 
-13. **Daemon pause mechanism implementation**: SIGUSR1 + acknowledgment vs. lock file vs. daemon HTTP endpoint for coordinated write access. SIGUSR1 is the simplest; lock file is more portable. Decision can be made during implementation.
+13. **Daemon pause mechanism implementation**: **resolved** — SIGUSR1 + acknowledgment file. CLI sends `SIGUSR1` to the daemon PID (read from `~/.lacuna/daemon.pid`). Daemon finishes any in-flight sync, stops the watchdog observer, closes the DuckDB connection, then writes `{state_dir}/daemon.paused`. CLI polls for that file (50 ms interval), writes DB, removes the file. Daemon detects file removal, re-opens connection, restarts observer, clears the pause event. Total pause: milliseconds. Acceptable for a personal tool.
 
 ---
 
@@ -863,11 +1020,14 @@ MCP-level tests run in a **separate Claude Code window** from the implementation
 | Decision | Resolution |
 |---|---|
 | Embedding model | `nomic-embed-text` — text-only, already served locally on RTX 5080. Multimodal embeddings are v3. |
-| Daemon trigger | Both: inotify live watcher (always-on, silent) + `llm-wiki sync` CLI (explicit, scriptable). Daemon is silent by default — logs to file, never stdout, never blocks writes. Visible only via `llm-wiki status`. |
+| Daemon trigger | Both: inotify live watcher (always-on, silent) + `lacuna sync` CLI (explicit, scriptable). Daemon is silent by default — logs to file, never stdout, never blocks writes. Visible only via `lacuna status`. |
 | Talk pages | Cut. The crystallise skill covers uncertainty and ongoing debates as filed sessions. A separate talk file per page is friction with no payoff. |
 | Claim extraction granularity | Citation-anchor boundary. Claim = sentence(s) sharing one `[[key.pdf]]` marker. Daemon splits at citation boundaries, not sentence boundaries. One verdict per anchor. |
 | Review paper section enforcement | Advisory. Skill guidance, not daemon enforcement. |
-| Video/audio ingest | Supported via optional pipeline: yt-dlp (audio-only download) → faster-whisper (local transcription, RTX 5080) → `.md` transcript → `add-source`. YouTube URLs and local audio/video files both handled. `source_type = podcast \| transcript`. Optional deps — not required for base install. |
+| YouTube ingest | yt-dlp subtitle download (auto-generated or manual captions, VTT format) → sliding-window deduplication (streaming word overlap, not exact-match) → heading-chunked markdown → `add-source`. Key derived from video title (slugified, up to 60 chars) or video ID as fallback. Metadata: title, channel, upload date from yt-dlp info. `source_type = transcript`. Faster-whisper transcription (audio → text) is deferred to v3 — subtitle download is sufficient for most content and requires no GPU inference. |
 | citation_number scope | Per unique (page_id, source_id) pair. Assigned first-seen order as the daemon processes citation markers left-to-right. Same source cited twice on a page gets the same number. The bibliography block in the navigate response lists sources ordered by number. |
 | Semantically close sections | On-the-fly ANN query against `sections.embedding` at navigate time (DuckDB vss HNSW index). Always fresh; no precomputed cache. Latency acceptable for a personal tool. |
 | Directory vs source_type | Orthogonal. Directory placement reflects intellectual domain; `source_type` is DB metadata. No type-based top-level directories in `raw/`. A session about attention goes in `raw/machine-learning/attention/`, not `raw/sessions/`. |
+| URL ingestion | Jina reader (`https://r.jina.ai/{url}`) — returns clean markdown + structured headers. No headless browser required. DOI detected in first 4000 chars; CrossRef bibtex fetched if found. Key from bibtex (academic) or URL path segment (general). Date from bibtex year, Jina `Published Time` header, or `--date` CLI flag. |
+| Hybrid search scoring | Reciprocal Rank Fusion (RRF, k=60). Vector hits gated by cosine similarity floor (0.45) before RRF — prevents semantically unrelated chunks from polluting results with near-zero scores. BM25 has no floor (absence of term = no hit). |
+| Vault config | `.lacuna.toml` at vault root. `[embed]` section: `url`, `model`. Env vars (`LACUNA_EMBED_URL`, `LACUNA_EMBED_MODEL`) override file values. Defaults: `http://localhost:8005`, `nomic-embed-text:v1.5`. Loaded at process start; daemon requires restart to pick up changes. |

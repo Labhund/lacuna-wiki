@@ -1,6 +1,6 @@
 import duckdb
 import pytest
-from llm_wiki.db.schema import init_db
+from lacuna_wiki.db.schema import init_db
 
 
 @pytest.fixture

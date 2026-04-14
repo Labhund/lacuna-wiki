@@ -1,12 +1,12 @@
-"""Tests for llm-wiki move-source command."""
+"""Tests for lacuna move-source command."""
 import duckdb
 import pytest
 from pathlib import Path
 from click.testing import CliRunner
 
-from llm_wiki.cli.main import cli
-from llm_wiki.db.schema import init_db
-from llm_wiki.vault import db_path, state_dir_for
+from lacuna_wiki.cli.main import cli
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.vault import db_path, state_dir_for
 
 
 @pytest.fixture

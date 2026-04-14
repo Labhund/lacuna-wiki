@@ -1,6 +1,6 @@
 from pathlib import Path
 import pytest
-from llm_wiki.vault import find_vault_root, state_dir_for, db_path
+from lacuna_wiki.vault import find_vault_root, state_dir_for, db_path
 
 
 def test_find_vault_root_from_vault_root(tmp_path):

@@ -1,6 +1,6 @@
 from pathlib import Path
 import pytest
-from llm_wiki.sources.chunker import Chunk, chunk_md
+from lacuna_wiki.sources.chunker import Chunk, chunk_md
 
 
 def write_md(tmp_path, content: str) -> Path:

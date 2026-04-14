@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stand up the CLI scaffold, vault detection, DuckDB schema, `llm-wiki init` wizard (dirs + git + MCP wiring), `llm-wiki status`, and `llm-wiki start`/`stop` stubs.
+**Goal:** Stand up the CLI scaffold, vault detection, DuckDB schema, `lacuna init` wizard (dirs + git + MCP wiring), `lacuna status`, and `lacuna start`/`stop` stubs.
 
-**Architecture:** DB lives at `~/.llm-wiki/vaults/{slug}-{hash}/vault.db` — completely outside the vault, which stays clean (just `wiki/`, `raw/`, `.gitignore`, git history). Vault root is detected by walking up the directory tree looking for both `wiki/` and `raw/` directories. `llm-wiki init` creates the vault, inits git, creates the DB, and wires MCP config for the user's harness (Hermes, Claude Code).
+**Architecture:** DB lives at `~/.lacuna/vaults/{slug}-{hash}/vault.db` — completely outside the vault, which stays clean (just `wiki/`, `raw/`, `.gitignore`, git history). Vault root is detected by walking up the directory tree looking for both `wiki/` and `raw/` directories. `lacuna init` creates the vault, inits git, creates the DB, and wires MCP config for the user's harness (Hermes, Claude Code).
 
 **Tech Stack:** Python 3.11+, Click 8+, DuckDB 0.10+, Rich 13+, tomli-w, pytest
 
-**Note on daemon commands:** `llm-wiki start` and `llm-wiki stop` are scaffolded as stubs in this plan. The daemon itself is Plan 3. The CLI entry points are defined now so the command surface is complete from day one.
+**Note on daemon commands:** `lacuna start` and `lacuna stop` are scaffolded as stubs in this plan. The daemon itself is Plan 3. The CLI entry points are defined now so the command surface is complete from day one.
 
 **Note on v1 migration:** Not in scope. Re-extract from sources via `add-source` + ingest skill (Plans 2 + 5). Onboarding story = normal first-use workflow.
 
@@ -17,15 +17,15 @@
 ## File Map
 
 ```
-src/llm_wiki/
+src/lacuna_wiki/
   __init__.py              — package marker
   vault.py                 — Vault class: root detection, state dir, db path
   cli/
     __init__.py            — package marker
     main.py                — Click group, entry point registered in pyproject.toml
-    init.py                — `llm-wiki init` wizard
-    status.py              — `llm-wiki status`
-    daemon.py              — `llm-wiki start` / `llm-wiki stop` stubs
+    init.py                — `lacuna init` wizard
+    status.py              — `lacuna status`
+    daemon.py              — `lacuna start` / `lacuna stop` stubs
   db/
     __init__.py            — package marker
     schema.py              — CREATE TABLE statements, init_db()
@@ -46,10 +46,10 @@ pyproject.toml
 
 **Files:**
 - Create: `pyproject.toml`
-- Create: `src/llm_wiki/__init__.py`
-- Create: `src/llm_wiki/cli/__init__.py`
-- Create: `src/llm_wiki/db/__init__.py`
-- Create: `src/llm_wiki/cli/main.py`
+- Create: `src/lacuna_wiki/__init__.py`
+- Create: `src/lacuna_wiki/cli/__init__.py`
+- Create: `src/lacuna_wiki/db/__init__.py`
+- Create: `src/lacuna_wiki/cli/main.py`
 - Create: `tests/__init__.py`
 
 - [ ] **Step 1: Write pyproject.toml**
@@ -60,7 +60,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "llm-wiki"
+name = "lacuna"
 version = "2.0.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -71,13 +71,13 @@ dependencies = [
 ]
 
 [project.scripts]
-llm-wiki = "llm_wiki.cli.main:cli"
+lacuna = "lacuna_wiki.cli.main:cli"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/llm_wiki"]
+packages = ["src/lacuna_wiki"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -86,12 +86,12 @@ pythonpath = ["src"]
 
 - [ ] **Step 2: Create package markers**
 
-`src/llm_wiki/__init__.py` — empty file.
-`src/llm_wiki/cli/__init__.py` — empty file.
-`src/llm_wiki/db/__init__.py` — empty file.
+`src/lacuna_wiki/__init__.py` — empty file.
+`src/lacuna_wiki/cli/__init__.py` — empty file.
+`src/lacuna_wiki/db/__init__.py` — empty file.
 `tests/__init__.py` — empty file.
 
-- [ ] **Step 3: Write `src/llm_wiki/cli/main.py`**
+- [ ] **Step 3: Write `src/lacuna_wiki/cli/main.py`**
 
 ```python
 import click
@@ -99,13 +99,13 @@ import click
 
 @click.group()
 def cli():
-    """llm-wiki v2 — personal research knowledge substrate."""
+    """lacuna v2 — personal research knowledge substrate."""
     pass
 
 
-from llm_wiki.cli.init import init       # noqa: E402
-from llm_wiki.cli.status import status   # noqa: E402
-from llm_wiki.cli.daemon import start, stop  # noqa: E402
+from lacuna_wiki.cli.init import init       # noqa: E402
+from lacuna_wiki.cli.status import status   # noqa: E402
+from lacuna_wiki.cli.daemon import start, stop  # noqa: E402
 
 cli.add_command(init)
 cli.add_command(status)
@@ -122,7 +122,7 @@ pip install -e ".[dev]"
 - [ ] **Step 5: Verify entry point**
 
 ```bash
-llm-wiki --help
+lacuna --help
 ```
 
 Expected output contains: `init`, `status`, `start`, `stop`.
@@ -139,7 +139,7 @@ git commit -m "chore: scaffold CLI package with Click entry point"
 ## Task 2: Vault root detection and state directory
 
 **Files:**
-- Create: `src/llm_wiki/vault.py`
+- Create: `src/lacuna_wiki/vault.py`
 - Create: `tests/test_vault.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -149,7 +149,7 @@ git commit -m "chore: scaffold CLI package with Click entry point"
 import hashlib
 from pathlib import Path
 import pytest
-from llm_wiki.vault import find_vault_root, state_dir_for, db_path
+from lacuna_wiki.vault import find_vault_root, state_dir_for, db_path
 
 
 def test_find_vault_root_from_wiki_dir(tmp_path):
@@ -208,7 +208,7 @@ pytest tests/test_vault.py -v
 
 Expected: all FAIL with `ModuleNotFoundError` or `ImportError`.
 
-- [ ] **Step 3: Write `src/llm_wiki/vault.py`**
+- [ ] **Step 3: Write `src/lacuna_wiki/vault.py`**
 
 ```python
 from __future__ import annotations
@@ -216,7 +216,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-_STATE_ROOT = Path.home() / ".llm-wiki" / "vaults"
+_STATE_ROOT = Path.home() / ".lacuna" / "vaults"
 
 
 def state_dir_for(vault_root: Path) -> Path:
@@ -255,7 +255,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/llm_wiki/vault.py tests/test_vault.py
+git add src/lacuna_wiki/vault.py tests/test_vault.py
 git commit -m "feat: vault root detection and state directory derivation"
 ```
 
@@ -264,8 +264,8 @@ git commit -m "feat: vault root detection and state directory derivation"
 ## Task 3: DuckDB schema
 
 **Files:**
-- Create: `src/llm_wiki/db/schema.py`
-- Create: `src/llm_wiki/db/connection.py`
+- Create: `src/lacuna_wiki/db/schema.py`
+- Create: `src/lacuna_wiki/db/connection.py`
 - Create: `tests/conftest.py`
 - Create: `tests/test_schema.py`
 
@@ -328,7 +328,7 @@ def test_source_chunks_has_no_preview_column(db_conn):
 
 
 def test_init_db_is_idempotent(db_conn):
-    from llm_wiki.db.schema import init_db
+    from lacuna_wiki.db.schema import init_db
     init_db(db_conn)  # second call — must not raise
     tables = db_conn.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'main'"
@@ -350,7 +350,7 @@ def _column_names(conn, table: str) -> set[str]:
 # tests/conftest.py
 import duckdb
 import pytest
-from llm_wiki.db.schema import init_db
+from lacuna_wiki.db.schema import init_db
 
 
 @pytest.fixture
@@ -370,7 +370,7 @@ pytest tests/test_schema.py -v
 
 Expected: all FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `src/llm_wiki/db/schema.py`**
+- [ ] **Step 3: Write `src/lacuna_wiki/db/schema.py`**
 
 ```python
 """DuckDB schema — all seven tables."""
@@ -447,7 +447,7 @@ def init_db(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute(statement)
 ```
 
-- [ ] **Step 4: Write `src/llm_wiki/db/connection.py`**
+- [ ] **Step 4: Write `src/lacuna_wiki/db/connection.py`**
 
 ```python
 """DuckDB connection factory."""
@@ -478,16 +478,16 @@ Expected: all PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/llm_wiki/db/ tests/conftest.py tests/test_schema.py
+git add src/lacuna_wiki/db/ tests/conftest.py tests/test_schema.py
 git commit -m "feat: DuckDB schema — seven tables, CREATE IF NOT EXISTS"
 ```
 
 ---
 
-## Task 4: `llm-wiki init` wizard
+## Task 4: `lacuna init` wizard
 
 **Files:**
-- Create: `src/llm_wiki/cli/init.py`
+- Create: `src/lacuna_wiki/cli/init.py`
 - Create: `tests/test_init.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -501,8 +501,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from llm_wiki.cli.init import init
-from llm_wiki.vault import db_path, find_vault_root
+from lacuna_wiki.cli.init import init
+from lacuna_wiki.vault import db_path, find_vault_root
 
 
 @pytest.fixture
@@ -513,7 +513,7 @@ def runner():
 @pytest.fixture(autouse=True)
 def no_mcp_wiring(monkeypatch):
     """Prevent init tests from touching ~/.claude/mcp.json or ~/.hermes/config.yaml."""
-    monkeypatch.setattr("llm_wiki.cli.init._offer_mcp_config", lambda vault_root: None)
+    monkeypatch.setattr("lacuna_wiki.cli.init._offer_mcp_config", lambda vault_root: None)
 
 
 def test_init_creates_wiki_and_raw_dirs(tmp_path, runner, monkeypatch):
@@ -578,10 +578,10 @@ pytest tests/test_init.py -v
 
 Expected: all FAIL with `ModuleNotFoundError` or `ImportError`.
 
-- [ ] **Step 3: Write `src/llm_wiki/cli/init.py`**
+- [ ] **Step 3: Write `src/lacuna_wiki/cli/init.py`**
 
 ```python
-"""llm-wiki init — vault setup wizard."""
+"""lacuna init — vault setup wizard."""
 from __future__ import annotations
 
 import json
@@ -591,9 +591,9 @@ from pathlib import Path
 import click
 from rich.console import Console
 
-from llm_wiki.db.connection import get_connection
-from llm_wiki.db.schema import init_db
-from llm_wiki.vault import db_path, state_dir_for
+from lacuna_wiki.db.connection import get_connection
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.vault import db_path, state_dir_for
 
 console = Console()
 
@@ -601,10 +601,10 @@ console = Console()
 @click.command()
 @click.argument("path", default=".", type=click.Path())
 def init(path: str) -> None:
-    """Initialise a new llm-wiki vault at PATH (default: current directory)."""
+    """Initialise a new lacuna vault at PATH (default: current directory)."""
     vault_root = Path(path).resolve()
 
-    console.print("\n[bold]llm-wiki v2 — vault setup[/bold]\n")
+    console.print("\n[bold]lacuna v2 — vault setup[/bold]\n")
     console.print(f"  Initialising vault at [bold]{vault_root}[/bold]\n")
 
     if not vault_root.exists():
@@ -630,7 +630,7 @@ def init(path: str) -> None:
     gitignore = vault_root / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(
-            "# llm-wiki database lives in ~/.llm-wiki/vaults/ — not in the vault itself\n"
+            "# lacuna database lives in ~/.lacuna/vaults/ — not in the vault itself\n"
         )
 
     # Database
@@ -651,13 +651,13 @@ def init(path: str) -> None:
         capture_output=True,
     )
     subprocess.run(
-        ["git", "-C", str(vault_root), "commit", "-m", "chore: initialise llm-wiki vault"],
+        ["git", "-C", str(vault_root), "commit", "-m", "chore: initialise lacuna vault"],
         capture_output=True,
     )
 
     console.print(
         f"\n[bold green]Vault ready.[/bold green]  "
-        f"Run [bold]llm-wiki status[/bold] to confirm.\n"
+        f"Run [bold]lacuna status[/bold] to confirm.\n"
     )
 
 
@@ -677,17 +677,17 @@ def _offer_mcp_config(vault_root: Path) -> None:
 
 
 def _merge_claude_code_mcp(mcp_path: Path, vault_root: Path) -> None:
-    """Add llm-wiki MCP server entry to Claude Code's mcp.json."""
+    """Add lacuna MCP server entry to Claude Code's mcp.json."""
     mcp_path.parent.mkdir(parents=True, exist_ok=True)
     data: dict = {}
     if mcp_path.exists():
         import json
         data = json.loads(mcp_path.read_text())
     data.setdefault("mcpServers", {})
-    data["mcpServers"]["llm-wiki"] = {
-        "command": "llm-wiki",
+    data["mcpServers"]["lacuna"] = {
+        "command": "lacuna",
         "args": ["mcp"],
-        "env": {"LLM_WIKI_VAULT": str(vault_root)},
+        "env": {"LACUNA_VAULT": str(vault_root)},
         "timeout": 120,
         "connect_timeout": 30,
     }
@@ -695,16 +695,16 @@ def _merge_claude_code_mcp(mcp_path: Path, vault_root: Path) -> None:
 
 
 def _merge_hermes_mcp(config_path: Path, vault_root: Path) -> None:
-    """Add llm-wiki MCP server block to Hermes config.yaml."""
+    """Add lacuna MCP server block to Hermes config.yaml."""
     import yaml
     data: dict = {}
     if config_path.exists():
         data = yaml.safe_load(config_path.read_text()) or {}
     data.setdefault("mcp_servers", {})
-    data["mcp_servers"]["llm-wiki"] = {
-        "command": "llm-wiki",
+    data["mcp_servers"]["lacuna"] = {
+        "command": "lacuna",
         "args": ["mcp"],
-        "env": {"LLM_WIKI_VAULT": str(vault_root)},
+        "env": {"LACUNA_VAULT": str(vault_root)},
         "timeout": 120,
         "connect_timeout": 30,
     }
@@ -738,13 +738,13 @@ Expected: all PASS.
 - [ ] **Step 6: Smoke test the wizard manually**
 
 ```bash
-cd /tmp && mkdir test-vault && cd test-vault && llm-wiki init .
+cd /tmp && mkdir test-vault && cd test-vault && lacuna init .
 ```
 
 Expected: wizard runs, prompts for name, creates wiki/ raw/ .git .gitignore, prints "Vault ready."
 
 ```bash
-llm-wiki status
+lacuna status
 ```
 
 Expected: prints vault path, DB path, table counts (all 0).
@@ -752,16 +752,16 @@ Expected: prints vault path, DB path, table counts (all 0).
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/llm_wiki/cli/init.py tests/test_init.py pyproject.toml
-git commit -m "feat: llm-wiki init wizard — dirs, git, DB, MCP config wiring"
+git add src/lacuna_wiki/cli/init.py tests/test_init.py pyproject.toml
+git commit -m "feat: lacuna init wizard — dirs, git, DB, MCP config wiring"
 ```
 
 ---
 
-## Task 5: `llm-wiki status`
+## Task 5: `lacuna status`
 
 **Files:**
-- Create: `src/llm_wiki/cli/status.py`
+- Create: `src/lacuna_wiki/cli/status.py`
 - Create: `tests/test_status.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -773,9 +773,9 @@ import pytest
 from click.testing import CliRunner
 from pathlib import Path
 
-from llm_wiki.cli.status import status
-from llm_wiki.db.schema import init_db
-from llm_wiki.vault import db_path, state_dir_for
+from lacuna_wiki.cli.status import status
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.vault import db_path, state_dir_for
 
 
 @pytest.fixture
@@ -842,10 +842,10 @@ pytest tests/test_status.py -v
 
 Expected: all FAIL with `ModuleNotFoundError` or `ImportError`.
 
-- [ ] **Step 3: Write `src/llm_wiki/cli/status.py`**
+- [ ] **Step 3: Write `src/lacuna_wiki/cli/status.py`**
 
 ```python
-"""llm-wiki status — vault health report."""
+"""lacuna status — vault health report."""
 from __future__ import annotations
 
 import sys
@@ -854,8 +854,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from llm_wiki.db.connection import get_connection
-from llm_wiki.vault import db_path, find_vault_root
+from lacuna_wiki.db.connection import get_connection
+from lacuna_wiki.vault import db_path, find_vault_root
 
 console = Console()
 
@@ -867,14 +867,14 @@ def status() -> None:
     """Show vault status and table row counts."""
     vault_root = find_vault_root()
     if vault_root is None:
-        console.print("[red]Not inside an llm-wiki vault.[/red] "
+        console.print("[red]Not inside an lacuna vault.[/red] "
                       "(No directory with both wiki/ and raw/ found.)")
         sys.exit(1)
 
     db = db_path(vault_root)
     if not db.exists():
         console.print(f"[red]Vault found at {vault_root} but database missing.[/red] "
-                      "Run [bold]llm-wiki sync[/bold] to rebuild.")
+                      "Run [bold]lacuna sync[/bold] to rebuild.")
         sys.exit(1)
 
     conn = get_connection(db, readonly=True)
@@ -889,7 +889,7 @@ def status() -> None:
 
     conn.close()
 
-    console.print(f"\n[bold]llm-wiki status[/bold]")
+    console.print(f"\n[bold]lacuna status[/bold]")
     console.print(f"  Vault:    {vault_root}")
     console.print(f"  Database: {db}\n")
     console.print(table)
@@ -907,23 +907,23 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/llm_wiki/cli/status.py tests/test_status.py
-git commit -m "feat: llm-wiki status — vault health report with table row counts"
+git add src/lacuna_wiki/cli/status.py tests/test_status.py
+git commit -m "feat: lacuna status — vault health report with table row counts"
 ```
 
 ---
 
-## Task 6: `llm-wiki start` / `llm-wiki stop` stubs
+## Task 6: `lacuna start` / `lacuna stop` stubs
 
 **Files:**
-- Create: `src/llm_wiki/cli/daemon.py`
+- Create: `src/lacuna_wiki/cli/daemon.py`
 
 No tests for stubs — these are wired in Plan 3 where the daemon is implemented and tested.
 
-- [ ] **Step 1: Write `src/llm_wiki/cli/daemon.py`**
+- [ ] **Step 1: Write `src/lacuna_wiki/cli/daemon.py`**
 
 ```python
-"""llm-wiki start / stop — daemon lifecycle commands.
+"""lacuna start / stop — daemon lifecycle commands.
 
 Stubs only. Full implementation in Plan 3 (Daemon).
 """
@@ -950,13 +950,13 @@ def stop() -> None:
 - [ ] **Step 2: Verify commands appear in help**
 
 ```bash
-llm-wiki --help
+lacuna --help
 ```
 
 Expected output includes: `start`, `stop`, `init`, `status`.
 
 ```bash
-llm-wiki start
+lacuna start
 ```
 
 Expected: prints "Daemon not yet implemented (Plan 3)."
@@ -964,7 +964,7 @@ Expected: prints "Daemon not yet implemented (Plan 3)."
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/llm_wiki/cli/daemon.py
+git add src/lacuna_wiki/cli/daemon.py
 git commit -m "chore: start/stop daemon stubs — full impl in Plan 3"
 ```
 
@@ -984,16 +984,16 @@ Expected: all PASS. If any fail, fix before proceeding.
 
 ```bash
 cd /tmp && rm -rf smoke-vault && mkdir smoke-vault && cd smoke-vault
-llm-wiki init .
+lacuna init .
 # Answer Y/n for MCP config prompts as preferred
-llm-wiki status
+lacuna status
 ```
 
 Expected status output:
 ```
-llm-wiki status
+lacuna status
   Vault:    /tmp/smoke-vault
-  Database: /home/<user>/.llm-wiki/vaults/...vault.db
+  Database: /home/<user>/.lacuna/vaults/...vault.db
 
   Table               Rows
   pages                  0
@@ -1011,7 +1011,7 @@ llm-wiki status
 git -C /tmp/smoke-vault log --oneline
 ```
 
-Expected: one commit — `chore: initialise llm-wiki vault`
+Expected: one commit — `chore: initialise lacuna vault`
 
 - [ ] **Step 4: Commit any cleanup**
 
@@ -1025,6 +1025,6 @@ git add -A && git commit -m "chore: plan 1 complete — foundation verified"
 
 - `relationship` column in `claim_sources`: the spec allows `supports | refutes | gap | NULL`. No CHECK constraint is added — the adversary skill enforces this at write time, not the DB. Deliberately omitted to avoid friction during development.
 - HNSW indexes (vss extension) are **not** in this plan. They are added in Plan 4 when search is wired up. The `embedding FLOAT[768]` columns exist but are unindexed until then.
-- `llm-wiki sync` (rebuild DB from markdown) is scaffolded in Plan 3 alongside the daemon, since the logic is the same.
-- `llm-wiki adversary-commit` is Plan 5.
+- `lacuna sync` (rebuild DB from markdown) is scaffolded in Plan 3 alongside the daemon, since the logic is the same.
+- `lacuna adversary-commit` is Plan 5.
 - v1 migration: not in scope. The onboarding path is the normal first-use workflow — `add-source` (Plan 2) + ingest skill (Plan 5).

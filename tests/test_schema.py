@@ -1,4 +1,4 @@
-from llm_wiki.db.schema import init_db
+from lacuna_wiki.db.schema import init_db
 
 
 def test_init_db_creates_all_tables(db_conn):

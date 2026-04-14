@@ -2,9 +2,9 @@ import duckdb
 import pytest
 from click.testing import CliRunner
 
-from llm_wiki.cli.status import status
-from llm_wiki.db.schema import init_db
-from llm_wiki.vault import db_path, state_dir_for
+from lacuna_wiki.cli.status import status
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.vault import db_path, state_dir_for
 
 
 @pytest.fixture

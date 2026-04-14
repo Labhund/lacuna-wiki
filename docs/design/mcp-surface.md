@@ -1,4 +1,4 @@
-# MCP Surface — llm-wiki-v2
+# MCP Surface — lacuna-v2
 
 > Design artifact. One tool, two call patterns. Everything else is CLI, skills scripts, or harness file tools.
 
@@ -108,7 +108,7 @@ Same navigate view, replicated per page, concatenated. One call for orientation 
 
 | Capability | How |
 |---|---|
-| Vault status, health, sync state | `llm-wiki status` CLI or skills script |
+| Vault status, health, sync state | `lacuna status` CLI or skills script |
 | SQL queries (claims, confidence, authority) | Skills scripts with read-only DuckDB connection |
 | Ingest / claim extraction | CLI + skills (harness-driven, LLM call outside daemon) |
 | Write pages | Harness file tools (Edit/Write) — daemon watches and syncs |

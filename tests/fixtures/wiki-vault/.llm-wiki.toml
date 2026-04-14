@@ -1,0 +1,3 @@
+[embed]
+url = "http://localhost:8005"
+model = "nomic-embed-text:v1.5"

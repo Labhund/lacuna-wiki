@@ -1,8 +1,8 @@
 import duckdb
 import pytest
 
-from llm_wiki.db.schema import init_db
-from llm_wiki.mcp.navigate import navigate_page, multi_read, PageNotFoundError
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.mcp.navigate import navigate_page, multi_read, PageNotFoundError
 
 
 @pytest.fixture

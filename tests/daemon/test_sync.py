@@ -2,9 +2,9 @@ import duckdb
 import pytest
 from pathlib import Path
 
-from llm_wiki.db.schema import init_db
-from llm_wiki.vault import db_path, state_dir_for
-from llm_wiki.daemon.sync import sync_page
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.vault import db_path, state_dir_for
+from lacuna_wiki.daemon.sync import sync_page
 
 
 @pytest.fixture

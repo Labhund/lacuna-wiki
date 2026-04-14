@@ -8,9 +8,9 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from llm_wiki.db.schema import init_db
-from llm_wiki.vault import db_path, state_dir_for
-from llm_wiki.daemon.watcher import WikiEventHandler, initial_sync
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.vault import db_path, state_dir_for
+from lacuna_wiki.daemon.watcher import WikiEventHandler, initial_sync
 
 
 @pytest.fixture

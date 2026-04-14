@@ -1,4 +1,4 @@
-# llm-wiki-v2
+# lacuna-v2
 
 **Before doing anything in this repository, thoroughly read AGENTS.md.**
 

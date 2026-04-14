@@ -1,9 +1,9 @@
 from datetime import date, datetime
 import duckdb
 import pytest
-from llm_wiki.db.schema import init_db
-from llm_wiki.sources.chunker import Chunk
-from llm_wiki.sources.register import register_chunks, register_source
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.sources.chunker import Chunk
+from lacuna_wiki.sources.register import register_chunks, register_source
 
 
 @pytest.fixture

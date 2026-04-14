@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 import pytest
-from llm_wiki.sources.extractor import extract_text
+from lacuna_wiki.sources.extractor import extract_text
 
 
 def test_extract_md_returns_content(tmp_path):
@@ -40,7 +40,7 @@ def test_extract_pdf_calls_pdftotext(tmp_path, monkeypatch):
             stderr = b""
         return R()
 
-    monkeypatch.setattr("llm_wiki.sources.extractor.subprocess.run", fake_run)
+    monkeypatch.setattr("lacuna_wiki.sources.extractor.subprocess.run", fake_run)
     result = extract_text(pdf)
     assert result == "Extracted text from PDF."
 
@@ -56,6 +56,6 @@ def test_extract_pdf_raises_on_pdftotext_failure(tmp_path, monkeypatch):
             stderr = b"Error: PDF damaged"
         return R()
 
-    monkeypatch.setattr("llm_wiki.sources.extractor.subprocess.run", fake_run)
+    monkeypatch.setattr("lacuna_wiki.sources.extractor.subprocess.run", fake_run)
     with pytest.raises(RuntimeError, match="pdftotext failed"):
         extract_text(pdf)

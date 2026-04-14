@@ -2,8 +2,8 @@ import duckdb
 import pytest
 from pathlib import Path
 
-from llm_wiki.db.schema import init_db
-from llm_wiki.mcp.search import bm25_search, vec_search, hybrid_search, SearchHit
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.mcp.search import bm25_search, vec_search, hybrid_search, SearchHit
 
 
 @pytest.fixture
@@ -103,3 +103,17 @@ def test_hybrid_search_vec_only_mechanism(conn):
     background = next((h for h in hits if h.section_name == "Background"), None)
     if background:
         assert background.mechanism in ("vec", "bm25+vec")
+
+
+def test_vec_search_min_score_filters_low_similarity(conn):
+    # Orthogonal to all stored embeddings — should return nothing above 0.45
+    query_vec = [0.0] * 383 + [1.0] + [0.0] * 384  # middle dimension, not used by any stored vec
+    hits = vec_search(conn, query_vec, scope="wiki", n=5, min_score=0.45)
+    assert hits == []
+
+
+def test_hybrid_search_returns_empty_when_nothing_relevant(conn):
+    # A query vector orthogonal to all stored embeddings and no BM25 match
+    query_vec = [0.0] * 383 + [1.0] + [0.0] * 384
+    hits = hybrid_search(conn, "zzznomatch", query_vec, scope="wiki", n=5)
+    assert hits == []

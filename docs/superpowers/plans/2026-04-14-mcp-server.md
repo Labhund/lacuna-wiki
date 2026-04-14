@@ -6,14 +6,14 @@
 
 **Architecture:** A FastMCP server exposes a single `wiki` tool with two call patterns: search (`q`) and navigate (`page`/`pages`). Search uses DuckDB FTS for BM25 and `array_inner_product` for vector similarity, combined with Reciprocal Rank Fusion. Navigate assembles section content + navigation panel (links in/out, sources cited, semantically close sections) entirely from DB. The daemon rebuilds the FTS index after each page sync. The MCP server opens a read-only DuckDB connection.
 
-**Tech Stack:** `mcp>=1.0` (FastMCP), DuckDB FTS extension (bundled), `array_inner_product` (no extension needed), `llm_wiki.sources.embedder.embed_texts` for query embedding. Vault path from `LLM_WIKI_VAULT` env var.
+**Tech Stack:** `mcp>=1.0` (FastMCP), DuckDB FTS extension (bundled), `array_inner_product` (no extension needed), `lacuna_wiki.sources.embedder.embed_texts` for query embedding. Vault path from `LACUNA_VAULT` env var.
 
 ---
 
 ## File Map
 
 ```
-src/llm_wiki/
+src/lacuna_wiki/
   mcp/
     __init__.py       — empty package marker
     server.py         — FastMCP instance, wiki tool, entry point (run via stdio)
@@ -21,7 +21,7 @@ src/llm_wiki/
     navigate.py       — navigate_page(), multi_read()
     format.py         — format_search_results(), format_navigate_response()
   cli/
-    mcp_cmd.py        — `llm-wiki mcp` Click command (reads LLM_WIKI_VAULT, calls server.run)
+    mcp_cmd.py        — `lacuna mcp` Click command (reads LACUNA_VAULT, calls server.run)
     main.py           — add mcp command (modify)
   db/
     schema.py         — add content TEXT to sections + source_chunks (modify)
@@ -65,9 +65,9 @@ tests/
 ## Task 1: Schema — add content columns
 
 **Files:**
-- Modify: `src/llm_wiki/db/schema.py`
-- Modify: `src/llm_wiki/daemon/sync.py`
-- Modify: `src/llm_wiki/sources/register.py`
+- Modify: `src/lacuna_wiki/db/schema.py`
+- Modify: `src/lacuna_wiki/daemon/sync.py`
+- Modify: `src/lacuna_wiki/sources/register.py`
 
 Sections and source_chunks currently store only offsets and hashes — no raw text. BM25 and navigate both need text in the DB.
 
@@ -112,7 +112,7 @@ Expected: FAIL — `OperationalError: table sections has no column named content
 
 - [ ] **Step 3: Add content columns to schema.py**
 
-In `src/llm_wiki/db/schema.py`, update the sections and source_chunks CREATE TABLE statements:
+In `src/lacuna_wiki/db/schema.py`, update the sections and source_chunks CREATE TABLE statements:
 
 ```python
     """CREATE TABLE IF NOT EXISTS sections (
@@ -151,7 +151,7 @@ Expected: all PASS.
 
 - [ ] **Step 5: Update _sync_sections in sync.py to store content**
 
-In `src/llm_wiki/daemon/sync.py`, find the INSERT in `_sync_sections` and add `content`:
+In `src/lacuna_wiki/daemon/sync.py`, find the INSERT in `_sync_sections` and add `content`:
 
 ```python
     conn.execute("DELETE FROM sections WHERE page_id=?", [page_id])
@@ -167,7 +167,7 @@ In `src/llm_wiki/daemon/sync.py`, find the INSERT in `_sync_sections` and add `c
 
 - [ ] **Step 6: Update register_chunks in register.py to store chunk text**
 
-In `src/llm_wiki/sources/register.py`, update `register_chunks`:
+In `src/lacuna_wiki/sources/register.py`, update `register_chunks`:
 
 ```python
 def register_chunks(
@@ -198,7 +198,7 @@ Expected: all PASS (existing tests pass because content is an optional column �
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/llm_wiki/db/schema.py src/llm_wiki/daemon/sync.py src/llm_wiki/sources/register.py tests/test_schema.py
+git add src/lacuna_wiki/db/schema.py src/lacuna_wiki/daemon/sync.py src/lacuna_wiki/sources/register.py tests/test_schema.py
 git commit -m "feat: add content TEXT to sections and source_chunks for BM25 search"
 ```
 
@@ -207,11 +207,11 @@ git commit -m "feat: add content TEXT to sections and source_chunks for BM25 sea
 ## Task 2: FTS index management + MCP package skeleton
 
 **Files:**
-- Modify: `src/llm_wiki/db/connection.py`
-- Modify: `src/llm_wiki/cli/init.py`
-- Modify: `src/llm_wiki/daemon/sync.py`
+- Modify: `src/lacuna_wiki/db/connection.py`
+- Modify: `src/lacuna_wiki/cli/init.py`
+- Modify: `src/lacuna_wiki/daemon/sync.py`
 - Modify: `pyproject.toml`
-- Create: `src/llm_wiki/mcp/__init__.py`
+- Create: `src/lacuna_wiki/mcp/__init__.py`
 - Create: `tests/mcp/__init__.py`
 
 The daemon rebuilds the FTS index after each sync. The MCP server queries it read-only.
@@ -244,7 +244,7 @@ Expected: `mcp` installs successfully.
 
 - [ ] **Step 2: Add load_fts_extension() to connection.py**
 
-Replace `src/llm_wiki/db/connection.py` with:
+Replace `src/lacuna_wiki/db/connection.py` with:
 
 ```python
 """DuckDB connection factory."""
@@ -271,7 +271,7 @@ def _load_extensions(conn: duckdb.DuckDBPyConnection) -> None:
 
 - [ ] **Step 3: Add FTS install to init.py**
 
-Read `src/llm_wiki/cli/init.py` first, then add FTS installation. Find where `init_db(conn)` is called and add extension install before it:
+Read `src/lacuna_wiki/cli/init.py` first, then add FTS installation. Find where `init_db(conn)` is called and add extension install before it:
 
 ```python
     # Install extensions (idempotent — safe to re-run)
@@ -285,7 +285,7 @@ Read `src/llm_wiki/cli/init.py` first, then add FTS installation. Find where `in
 
 - [ ] **Step 4: Add FTS rebuild to sync.py**
 
-In `src/llm_wiki/daemon/sync.py`, add a `_rebuild_fts` helper and call it from `sync_page` after commit:
+In `src/lacuna_wiki/daemon/sync.py`, add a `_rebuild_fts` helper and call it from `sync_page` after commit:
 
 ```python
 def sync_page(
@@ -332,7 +332,7 @@ def _rebuild_fts(conn: duckdb.DuckDBPyConnection) -> None:
 - [ ] **Step 5: Create package markers**
 
 ```bash
-touch src/llm_wiki/mcp/__init__.py tests/mcp/__init__.py
+touch src/lacuna_wiki/mcp/__init__.py tests/mcp/__init__.py
 ```
 
 - [ ] **Step 6: Verify FTS rebuild in sync test**
@@ -371,7 +371,7 @@ Expected: all PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add pyproject.toml src/llm_wiki/db/connection.py src/llm_wiki/cli/init.py src/llm_wiki/daemon/sync.py src/llm_wiki/mcp/__init__.py tests/mcp/__init__.py tests/daemon/test_sync.py
+git add pyproject.toml src/lacuna_wiki/db/connection.py src/lacuna_wiki/cli/init.py src/lacuna_wiki/daemon/sync.py src/lacuna_wiki/mcp/__init__.py tests/mcp/__init__.py tests/daemon/test_sync.py
 git commit -m "feat: FTS index management — daemon rebuilds after sync, mcp package skeleton"
 ```
 
@@ -380,7 +380,7 @@ git commit -m "feat: FTS index management — daemon rebuilds after sync, mcp pa
 ## Task 3: BM25 + vector search
 
 **Files:**
-- Create: `src/llm_wiki/mcp/search.py`
+- Create: `src/lacuna_wiki/mcp/search.py`
 - Create: `tests/mcp/test_search.py`
 
 `hybrid_search` runs BM25 and vector queries separately, ranks each, and combines with RRF (k=60).
@@ -393,8 +393,8 @@ import duckdb
 import pytest
 from pathlib import Path
 
-from llm_wiki.db.schema import init_db
-from llm_wiki.mcp.search import bm25_search, vec_search, hybrid_search, SearchHit
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.mcp.search import bm25_search, vec_search, hybrid_search, SearchHit
 
 
 @pytest.fixture
@@ -502,9 +502,9 @@ def test_hybrid_search_vec_only_mechanism(conn):
 .venv/bin/pytest tests/mcp/test_search.py -v 2>&1 | tail -5
 ```
 
-Expected: `ModuleNotFoundError: No module named 'llm_wiki.mcp.search'`
+Expected: `ModuleNotFoundError: No module named 'lacuna_wiki.mcp.search'`
 
-- [ ] **Step 3: Write src/llm_wiki/mcp/search.py**
+- [ ] **Step 3: Write src/lacuna_wiki/mcp/search.py**
 
 ```python
 from __future__ import annotations
@@ -697,7 +697,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/llm_wiki/mcp/search.py tests/mcp/test_search.py
+git add src/lacuna_wiki/mcp/search.py tests/mcp/test_search.py
 git commit -m "feat: hybrid BM25+vector search with RRF combination"
 ```
 
@@ -706,7 +706,7 @@ git commit -m "feat: hybrid BM25+vector search with RRF combination"
 ## Task 4: Navigate response
 
 **Files:**
-- Create: `src/llm_wiki/mcp/navigate.py`
+- Create: `src/lacuna_wiki/mcp/navigate.py`
 - Create: `tests/mcp/test_navigate.py`
 
 `navigate_page` assembles section content + full navigation panel from DB. `multi_read` calls it per page and concatenates.
@@ -718,8 +718,8 @@ git commit -m "feat: hybrid BM25+vector search with RRF combination"
 import duckdb
 import pytest
 
-from llm_wiki.db.schema import init_db
-from llm_wiki.mcp.navigate import navigate_page, multi_read, PageNotFoundError
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.mcp.navigate import navigate_page, multi_read, PageNotFoundError
 
 
 @pytest.fixture
@@ -828,9 +828,9 @@ def test_multi_read_concatenates_pages(conn):
 .venv/bin/pytest tests/mcp/test_navigate.py -v 2>&1 | tail -5
 ```
 
-Expected: `ModuleNotFoundError: No module named 'llm_wiki.mcp.navigate'`
+Expected: `ModuleNotFoundError: No module named 'lacuna_wiki.mcp.navigate'`
 
-- [ ] **Step 3: Write src/llm_wiki/mcp/navigate.py**
+- [ ] **Step 3: Write src/lacuna_wiki/mcp/navigate.py**
 
 ```python
 from __future__ import annotations
@@ -1006,7 +1006,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/llm_wiki/mcp/navigate.py tests/mcp/test_navigate.py
+git add src/lacuna_wiki/mcp/navigate.py tests/mcp/test_navigate.py
 git commit -m "feat: navigate response — section content, navigation panel, semantically close sections"
 ```
 
@@ -1015,7 +1015,7 @@ git commit -m "feat: navigate response — section content, navigation panel, se
 ## Task 5: Response formatting
 
 **Files:**
-- Create: `src/llm_wiki/mcp/format.py`
+- Create: `src/lacuna_wiki/mcp/format.py`
 - Create: `tests/mcp/test_format.py`
 
 `format_search_results` renders `SearchHit` objects as the text the agent reads. It extracts a relevant passage from the section content (up to 300 chars around the first query term match, or first 300 chars).
@@ -1024,8 +1024,8 @@ git commit -m "feat: navigate response — section content, navigation panel, se
 
 ```python
 # tests/mcp/test_format.py
-from llm_wiki.mcp.format import format_search_results, extract_passage
-from llm_wiki.mcp.search import SearchHit
+from lacuna_wiki.mcp.format import format_search_results, extract_passage
+from lacuna_wiki.mcp.search import SearchHit
 
 
 def _hit(slug, section, content, score=0.9, mechanism="bm25+vec", tok=300):
@@ -1098,14 +1098,14 @@ def test_format_search_results_source_type_shown():
 .venv/bin/pytest tests/mcp/test_format.py -v 2>&1 | tail -5
 ```
 
-Expected: `ModuleNotFoundError: No module named 'llm_wiki.mcp.format'`
+Expected: `ModuleNotFoundError: No module named 'lacuna_wiki.mcp.format'`
 
-- [ ] **Step 3: Write src/llm_wiki/mcp/format.py**
+- [ ] **Step 3: Write src/lacuna_wiki/mcp/format.py**
 
 ```python
 from __future__ import annotations
 
-from llm_wiki.mcp.search import SearchHit
+from lacuna_wiki.mcp.search import SearchHit
 
 _PASSAGE_MAX = 300
 
@@ -1156,7 +1156,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/llm_wiki/mcp/format.py tests/mcp/test_format.py
+git add src/lacuna_wiki/mcp/format.py tests/mcp/test_format.py
 git commit -m "feat: search result formatting with passage extraction"
 ```
 
@@ -1165,9 +1165,9 @@ git commit -m "feat: search result formatting with passage extraction"
 ## Task 6: MCP server + CLI command
 
 **Files:**
-- Create: `src/llm_wiki/mcp/server.py`
-- Create: `src/llm_wiki/cli/mcp_cmd.py`
-- Modify: `src/llm_wiki/cli/main.py`
+- Create: `src/lacuna_wiki/mcp/server.py`
+- Create: `src/lacuna_wiki/cli/mcp_cmd.py`
+- Modify: `src/lacuna_wiki/cli/main.py`
 
 The `wiki` tool dispatches to search or navigate based on which parameters are set. Exactly one of `q`, `page`, or `pages` must be provided.
 
@@ -1179,8 +1179,8 @@ import duckdb
 import pytest
 from pathlib import Path
 
-from llm_wiki.db.schema import init_db
-from llm_wiki.mcp.server import dispatch_wiki
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.mcp.server import dispatch_wiki
 
 
 @pytest.fixture
@@ -1243,9 +1243,9 @@ def test_dispatch_page_not_found(conn):
 .venv/bin/pytest tests/mcp/test_server.py -v 2>&1 | tail -5
 ```
 
-Expected: `ModuleNotFoundError: No module named 'llm_wiki.mcp.server'`
+Expected: `ModuleNotFoundError: No module named 'lacuna_wiki.mcp.server'`
 
-- [ ] **Step 3: Write src/llm_wiki/mcp/server.py**
+- [ ] **Step 3: Write src/lacuna_wiki/mcp/server.py**
 
 ```python
 from __future__ import annotations
@@ -1255,13 +1255,13 @@ from typing import Callable
 import duckdb
 from mcp.server.fastmcp import FastMCP
 
-from llm_wiki.mcp.format import format_search_results
-from llm_wiki.mcp.navigate import PageNotFoundError, multi_read, navigate_page
-from llm_wiki.mcp.search import hybrid_search
+from lacuna_wiki.mcp.format import format_search_results
+from lacuna_wiki.mcp.navigate import PageNotFoundError, multi_read, navigate_page
+from lacuna_wiki.mcp.search import hybrid_search
 
 EmbedFn = Callable[[list[str]], list[list[float]]]
 
-mcp_app = FastMCP("llm-wiki")
+mcp_app = FastMCP("lacuna")
 
 
 def dispatch_wiki(
@@ -1317,10 +1317,10 @@ def make_wiki_tool(conn: duckdb.DuckDBPyConnection, embed_fn: EmbedFn):
                              page=page, section=section, pages=pages)
 ```
 
-- [ ] **Step 4: Write src/llm_wiki/cli/mcp_cmd.py**
+- [ ] **Step 4: Write src/lacuna_wiki/cli/mcp_cmd.py**
 
 ```python
-"""llm-wiki mcp — start the MCP server (stdio transport)."""
+"""lacuna mcp — start the MCP server (stdio transport)."""
 from __future__ import annotations
 
 import os
@@ -1329,30 +1329,30 @@ from pathlib import Path
 
 import click
 
-from llm_wiki.vault import db_path, find_vault_root
+from lacuna_wiki.vault import db_path, find_vault_root
 
 
 @click.command("mcp")
 def mcp_command() -> None:
-    """Start the MCP server (stdio transport). Vault from LLM_WIKI_VAULT env var."""
-    vault_env = os.environ.get("LLM_WIKI_VAULT")
+    """Start the MCP server (stdio transport). Vault from LACUNA_VAULT env var."""
+    vault_env = os.environ.get("LACUNA_VAULT")
     if vault_env:
         vault_root = Path(vault_env)
     else:
         vault_root = find_vault_root()
 
     if vault_root is None:
-        click.echo("LLM_WIKI_VAULT not set and not inside an llm-wiki vault.", err=True)
+        click.echo("LACUNA_VAULT not set and not inside an lacuna vault.", err=True)
         sys.exit(1)
 
     db = db_path(vault_root)
     if not db.exists():
-        click.echo(f"Database not found at {db}. Run llm-wiki init first.", err=True)
+        click.echo(f"Database not found at {db}. Run lacuna init first.", err=True)
         sys.exit(1)
 
-    from llm_wiki.db.connection import get_connection
-    from llm_wiki.mcp.server import make_wiki_tool, mcp_app
-    from llm_wiki.sources.embedder import embed_texts
+    from lacuna_wiki.db.connection import get_connection
+    from lacuna_wiki.mcp.server import make_wiki_tool, mcp_app
+    from lacuna_wiki.sources.embedder import embed_texts
 
     conn = get_connection(db, readonly=True)
     make_wiki_tool(conn, embed_texts)
@@ -1361,10 +1361,10 @@ def mcp_command() -> None:
 
 - [ ] **Step 5: Register mcp command in main.py**
 
-In `src/llm_wiki/cli/main.py`, add:
+In `src/lacuna_wiki/cli/main.py`, add:
 
 ```python
-from llm_wiki.cli.mcp_cmd import mcp_command  # noqa: E402
+from lacuna_wiki.cli.mcp_cmd import mcp_command  # noqa: E402
 
 cli.add_command(mcp_command)
 ```
@@ -1380,8 +1380,8 @@ Expected: all PASS.
 - [ ] **Step 7: Verify CLI help**
 
 ```bash
-.venv/bin/llm-wiki --help
-.venv/bin/llm-wiki mcp --help
+.venv/bin/lacuna --help
+.venv/bin/lacuna mcp --help
 ```
 
 Expected: `mcp` appears in the command list.
@@ -1397,7 +1397,7 @@ Expected: all PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add src/llm_wiki/mcp/server.py src/llm_wiki/cli/mcp_cmd.py src/llm_wiki/cli/main.py tests/mcp/test_server.py
+git add src/lacuna_wiki/mcp/server.py src/lacuna_wiki/cli/mcp_cmd.py src/lacuna_wiki/cli/main.py tests/mcp/test_server.py
 git commit -m "feat: MCP server — wiki tool with search and navigate dispatch"
 ```
 
@@ -1425,10 +1425,10 @@ import duckdb
 import pytest
 from pathlib import Path
 
-from llm_wiki.db.schema import init_db
-from llm_wiki.daemon.sync import sync_page
-from llm_wiki.vault import db_path, state_dir_for
-from llm_wiki.mcp.server import dispatch_wiki
+from lacuna_wiki.db.schema import init_db
+from lacuna_wiki.daemon.sync import sync_page
+from lacuna_wiki.vault import db_path, state_dir_for
+from lacuna_wiki.mcp.server import dispatch_wiki
 
 
 @pytest.fixture
@@ -1536,7 +1536,7 @@ Expected: all PASS.
 
 - [ ] **Step 4: Create fixture vault files for live MCP testing**
 
-These files are for the separate-window live MCP test described in the design doc. They are committed as-is; the live test session syncs them via `llm-wiki start`.
+These files are for the separate-window live MCP test described in the design doc. They are committed as-is; the live test session syncs them via `lacuna start`.
 
 ```bash
 mkdir -p tests/fixtures/wiki-vault/wiki tests/fixtures/wiki-vault/raw
@@ -1603,8 +1603,8 @@ git commit -m "test: MCP integration tests + fixture vault for live testing"
 | Navigate: links in/out | Task 4 |
 | Navigate: semantically close sections | Task 4 |
 | Navigate: sources cited with citation numbers | Task 4 |
-| `LLM_WIKI_VAULT` env var | Task 6 |
-| `llm-wiki mcp` CLI command | Task 6 |
+| `LACUNA_VAULT` env var | Task 6 |
+| `lacuna mcp` CLI command | Task 6 |
 | Fixture vault for live testing | Task 7 |
 | Read-only DB connection | Task 6 (`get_connection(db, readonly=True)`) |
 | FTS rebuilt by daemon | Task 2 |

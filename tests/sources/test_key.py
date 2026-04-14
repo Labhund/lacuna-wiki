@@ -1,6 +1,6 @@
 import duckdb
 import pytest
-from llm_wiki.sources.key import derive_key, derive_key_from_bibtex
+from lacuna_wiki.sources.key import derive_key, derive_key_from_bibtex
 
 
 @pytest.fixture

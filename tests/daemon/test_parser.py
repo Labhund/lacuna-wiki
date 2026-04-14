@@ -1,5 +1,5 @@
 import pytest
-from llm_wiki.daemon.parser import (
+from lacuna_wiki.daemon.parser import (
     Section, CitationEntry, parse_sections, parse_wikilinks, parse_citation_claims,
 )
 
