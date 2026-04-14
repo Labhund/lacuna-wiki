@@ -54,7 +54,15 @@ On `raw/` or `wiki/` **move event**:
 
 The daemon does not decide what to write. It does not summarise. It does not evaluate. It is infrastructure.
 
-**Citation format:** `[[vaswani2017.pdf]]` — source key only, no path prefix, no `|N` number. Obsidian resolves by filename across the entire vault — `[[vaswani2017.pdf]]` resolves to `raw/machine-learning/attention/vaswani2017.pdf` without spawning a new file. Unresolved links appear as greyed-out nodes; Obsidian never auto-creates files for them. The `.pdf` extension disambiguates from wiki page wikilinks. The daemon assigns sequential citation numbers as a derived DB field. The agent never invents filenames — it uses the canonical key printed by `llm-wiki add-source`.
+**Citation format — agent writes:** `[[vaswani2017.pdf]]` — source key only, no path prefix, no number. The agent never invents filenames — it uses the canonical key printed by `llm-wiki add-source`.
+
+**Citation format — daemon writes back:** `[[vaswani2017.pdf|1]]` — the daemon assigns sequential numbers per page and writes the `|N` display alias back to the file. In Obsidian reading mode this renders as `1` (clickable, links to the PDF). The page reads as natural prose with numbered citations rather than a chain of raw filenames.
+
+The daemon's write-back triggers a file change event. The daemon guards against loops by tracking files it just wrote — citation-number-only edits are ignored on the resulting change event.
+
+**Claim hash:** computed on the authored sentence text with `|N` stripped — `[[vaswani2017.pdf|1]]` and `[[vaswani2017.pdf|3]]` hash identically. If only citation numbers change on a re-parse (e.g. a new citation inserted earlier in the page), existing `relationship` values are preserved.
+
+**Obsidian resolution:** `[[vaswani2017.pdf|1]]` resolves to `raw/machine-learning/attention/vaswani2017.pdf` by filename match across the vault — no new file spawned. The `.pdf` extension disambiguates from wiki page wikilinks.
 
 **Filename immutability contract:** filenames in `raw/` must not be renamed after registration (Obsidian's rename-and-update feature must not be used on `raw/` files). Moving files between directories is safe — the daemon updates paths automatically. Renaming breaks the slug→filename mapping.
 
@@ -455,12 +463,13 @@ No write contention because there is exactly one writer by design.
 
 Claims are extracted **deterministically** by the daemon on every file change. No LLM.
 
-The citation format `[[key.pdf]]` is the claim marker. The daemon:
+The citation format `[[key.pdf|N]]` (after daemon write-back) is the claim marker. The daemon:
 1. Sentence-splits the changed section
 2. Extracts sentences containing `[[*.pdf]]` markers
-3. Resolves each key to a `source_id` in the sources table (key = slug)
-4. Assigns sequential citation numbers per page (derived field, not authored)
-5. Inserts into `claims` + `claim_sources` with `relationship = NULL`
+3. Strips `|N` display alias → resolves key to `source_id` in sources table
+4. Hashes the sentence text with `|N` stripped — stable across citation renumbering
+5. Assigns sequential citation numbers per page; writes `|N` aliases back to the file
+6. If hash matches existing claim: preserve `relationship`. If new: insert with `relationship = NULL`.
 
 `relationship` (supports | refutes | gap) is populated by the adversary skill — a harness-driven, multi-turn LLM evaluation invoked explicitly by the user. The daemon never calls it.
 
@@ -470,7 +479,7 @@ The citation format `[[key.pdf]]` is the claim marker. The daemon:
 
 Hard principles. These are not aspirations — they are design constraints. Anything that violates them gets cut.
 
-### Eight hard points
+### Nine hard points
 
 **P1 — The agent is the sole intelligence.**
 The daemon does not decide, summarise, or evaluate. Skills encode conventions. The harness is where reasoning happens. Automation of judgment is the failure mode, not a feature.
@@ -492,6 +501,9 @@ It is not a product. It is not a shared platform. It is a research instrument tu
 
 **P7 — Intelligence is never automated.**
 The adversary skill runs when the researcher invokes it. Crystallisation of sessions happens when the researcher decides. No background LLM workers. No auto-resolution of contradictions. The researcher is always in the loop at judgment calls.
+
+**P9 — The files are the user's files.**
+The wiki sits passively on top of the file system. It adds value without adding friction, obscure rituals, or required workflows. The user can reorganise directories, edit in Obsidian, vim, or anything else, and the system adapts silently. No commands required to keep the DB in sync. No file format the user must understand to use the wiki. The only contract the user must honour is the citation format — everything else is the system's problem, not theirs.
 
 **P8 — Synthesised knowledge is compiled once.**
 No component re-derives what the wiki has already ingested. Each ingest call pays the LLM cost once; future sessions read compiled structure from DuckDB. Reading raw source material at query time (source_chunks, scope:"all") is the evidence layer working as designed — that is not re-derivation. Re-deriving synthesised knowledge is the failure mode: it signals the wiki is not doing its job.
