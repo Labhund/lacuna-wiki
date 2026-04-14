@@ -17,6 +17,8 @@
 
 Lacuna is a single MCP tool — `wiki` — that you plug into your existing agent harness (Claude Code, Hermes, OpenClaw) to give it a searchable, compounding personal research graph. Feed it a YouTube URL, an arXiv link, or a downloaded PDF. Your agent runs the structured extraction. The knowledge accumulates across every session.
 
+Your vault is plain markdown — works natively with [Obsidian](https://obsidian.md/). Browse your knowledge graph as a human, query it as an agent. Same files, no sync required.
+
 It is the *lacuna* — the missing link between your raw inputs and your second brain.
 
 ---
@@ -118,7 +120,7 @@ Skills included:
 
 Lacuna outputs aren't isolated notes. Each extraction is structured to deliberately compound — new pages wikilink to existing ones, concepts accumulate across sessions, and the graph gets richer with every source you add.
 
-Under the hood: hybrid BM25 + vector search over a DuckDB store, with plain markdown files in your vault that Obsidian can read directly. No format lock-in. Your vault is just a folder.
+Under the hood: hybrid BM25 + vector search over a DuckDB store. No format lock-in — your vault is just a folder.
 
 ```
 my-vault/
