@@ -59,6 +59,32 @@ def test_init_db_is_idempotent(db_conn):
     assert tables == 7
 
 
+def test_sections_has_content_column(db_conn):
+    db_conn.execute("INSERT INTO pages (slug, path, last_modified) VALUES ('p', 'wiki/p.md', now())")
+    page_id = db_conn.execute("SELECT id FROM pages WHERE slug='p'").fetchone()[0]
+    db_conn.execute(
+        "INSERT INTO sections (page_id, position, name, content, content_hash, token_count)"
+        " VALUES (?, 0, 'Intro', 'Hello world text.', 'abc123', 3)",
+        [page_id],
+    )
+    text = db_conn.execute("SELECT content FROM sections WHERE name='Intro'").fetchone()[0]
+    assert text == "Hello world text."
+
+
+def test_source_chunks_has_content_column(db_conn):
+    db_conn.execute(
+        "INSERT INTO sources (slug, path, source_type) VALUES ('s1', 'raw/s.pdf', 'paper')"
+    )
+    src_id = db_conn.execute("SELECT id FROM sources WHERE slug='s1'").fetchone()[0]
+    db_conn.execute(
+        "INSERT INTO source_chunks (source_id, chunk_index, start_line, end_line, content)"
+        " VALUES (?, 0, 1, 10, 'Chunk text here.')",
+        [src_id],
+    )
+    text = db_conn.execute("SELECT content FROM source_chunks").fetchone()[0]
+    assert text == "Chunk text here."
+
+
 def _column_names(conn, table: str) -> set[str]:
     return {
         row[0]

@@ -103,9 +103,10 @@ def _sync_sections(
     conn.execute("DELETE FROM sections WHERE page_id=?", [page_id])
     for s in sections:
         conn.execute(
-            """INSERT INTO sections (page_id, position, name, content_hash, token_count, embedding)
-               VALUES (?,?,?,?,?,?)""",
-            [page_id, s.position, s.name, s.content_hash,
+            """INSERT INTO sections
+               (page_id, position, name, content, content_hash, token_count, embedding)
+               VALUES (?,?,?,?,?,?,?)""",
+            [page_id, s.position, s.name, s.content, s.content_hash,
              count_tokens(s.content), existing.get(s.content_hash)],
         )
 

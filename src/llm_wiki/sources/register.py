@@ -31,12 +31,12 @@ def register_chunks(
     chunks: list[Chunk],
     embeddings: list[list[float]],
 ) -> None:
-    """Insert source_chunks rows. Text is NOT stored — only offsets and embedding."""
+    """Insert source_chunks rows. Text stored for BM25 search."""
     for chunk, embedding in zip(chunks, embeddings):
         conn.execute(
             """INSERT INTO source_chunks
-               (source_id, chunk_index, heading, start_line, end_line, token_count, embedding)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (source_id, chunk_index, heading, start_line, end_line, token_count, content, embedding)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             [source_id, chunk.chunk_index, chunk.heading,
-             chunk.start_line, chunk.end_line, chunk.token_count, embedding],
+             chunk.start_line, chunk.end_line, chunk.token_count, chunk.text, embedding],
         )

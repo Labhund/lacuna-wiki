@@ -25,6 +25,7 @@ _TABLES = [
     page_id      INTEGER REFERENCES pages(id),
     position     INTEGER NOT NULL,
     name         TEXT NOT NULL,
+    content      TEXT,
     content_hash TEXT,
     token_count  INTEGER,
     embedding    FLOAT[768]
@@ -69,6 +70,7 @@ _TABLES = [
     start_line  INTEGER NOT NULL,
     end_line    INTEGER NOT NULL,
     token_count INTEGER,
+    content     TEXT,
     embedding   FLOAT[768]
 )""",
 ]
