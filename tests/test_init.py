@@ -54,6 +54,22 @@ def test_init_creates_gitignore(tmp_path, runner, monkeypatch):
     assert (tmp_path / ".gitignore").exists()
 
 
+def test_init_gitignore_includes_sessions(tmp_path, runner, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(init)
+    assert "wiki/.sessions/" in (tmp_path / ".gitignore").read_text()
+
+
+def test_init_gitignore_sessions_appended_if_exists(tmp_path, runner, monkeypatch):
+    """If .gitignore already exists without the sessions entry, it is appended."""
+    (tmp_path / ".gitignore").write_text("some-existing-entry\n")
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(init)
+    content = (tmp_path / ".gitignore").read_text()
+    assert "wiki/.sessions/" in content
+    assert "some-existing-entry" in content
+
+
 def test_init_is_idempotent(tmp_path, runner, monkeypatch):
     """Running init twice on the same directory must not raise."""
     monkeypatch.chdir(tmp_path)

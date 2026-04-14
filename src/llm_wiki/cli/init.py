@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 
+from llm_wiki.config import write_default_config
 from llm_wiki.db.connection import get_connection
 from llm_wiki.db.schema import init_db
 from llm_wiki.vault import db_path, state_dir_for
@@ -45,10 +46,16 @@ def init(path: str) -> None:
 
     # .gitignore
     gitignore = vault_root / ".gitignore"
+    _GITIGNORE_ENTRIES = (
+        "# llm-wiki database lives in ~/.llm-wiki/vaults/ — not in the vault itself\n"
+        "wiki/.sessions/\n"
+    )
     if not gitignore.exists():
-        gitignore.write_text(
-            "# llm-wiki database lives in ~/.llm-wiki/vaults/ — not in the vault itself\n"
-        )
+        gitignore.write_text(_GITIGNORE_ENTRIES)
+    else:
+        content = gitignore.read_text()
+        if "wiki/.sessions/" not in content:
+            gitignore.write_text(content.rstrip("\n") + "\nwiki/.sessions/\n")
 
     # Database
     state = state_dir_for(vault_root)
@@ -64,6 +71,10 @@ def init(path: str) -> None:
     init_db(conn)
     conn.close()
     console.print(f"  [green]✓[/green] database ready at {db}")
+
+    # Config file
+    cfg = write_default_config(vault_root)
+    console.print(f"  [green]✓[/green] config at {cfg.name} (edit embed.url / embed.model as needed)")
 
     # MCP configuration
     _offer_mcp_config(vault_root)
