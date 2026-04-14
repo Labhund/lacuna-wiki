@@ -468,6 +468,8 @@ All source types are first-class. Same sources table, same citation format, same
 | `book` | `goodfellow2016` | publication year | External |
 | `blog` | `karpathy2023-rnn` | post date | External |
 | `url` | `openai-gpt4-report` | fetched or published date | External |
+| `podcast` | `lex-fridman-karpathy-2023` | episode date | External (transcribed) |
+| `transcript` | `2026-04-14-lab-meeting` | recording date | Human (transcribed) |
 | `session` | `2026-04-14-attn-investigation` | session date | LLM (crystallised) |
 | `note` | `2026-04-14-meeting-kv-cache` | note date | Human |
 | `experiment` | `2026-04-14-scaling-run` | experiment date | Human |
@@ -544,14 +546,18 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 
 ## Open Questions
 
-1. **Embedding model**: which model for section + claim embeddings? Needs to run locally on RTX 5080. Candidates: `nomic-embed-text`, `mxbai-embed-large`. Multimodal-capable model for v3 path.
+1. **Claim extraction granularity**: sentences are the current plan. Should multi-sentence passages sharing a citation be one claim? Coupled to adversary skill design — cannot settle until adversary is scoped.
 
-2. **Claim extraction granularity**: sentences are the current plan. Should multi-sentence passages sharing a citation be one claim? Affects adversary evaluation granularity.
+2. **InfraNodus integration pattern**: agent calls it directly from harness, or a skill wraps it? Low priority given P8 — run over wiki pages (already compiled), not raw/.
 
-3. **Daemon trigger**: inotify file watcher for live sync, or `llm-wiki sync` CLI run as a hook? Live watcher is seamless; CLI hook is more explicit and testable.
+---
 
-4. **InfraNodus integration pattern**: agent calls it directly from harness, or a skill wraps it? Skill wrapper standardises how gap detection is invoked and lets us log what was found.
+## Settled Decisions
 
-5. **Talk pages** (carried from v1 P4): should pages have associated talk/discussion pages for recording uncertainty, ongoing debates, and known weaknesses? Supported but not required feels right — but unclear if v2 or v3. The crystallisation loop may make this redundant (sessions are filed as sources).
-
-6. **Review paper section enforcement**: advisory (skill-level guidance) — settled. Section names are the agent's judgment. The north star is communicated in the skill, not enforced by the daemon.
+| Decision | Resolution |
+|---|---|
+| Embedding model | `nomic-embed-text` — text-only, already served locally on RTX 5080. Multimodal embeddings are v3. |
+| Daemon trigger | Both: inotify live watcher (always-on, silent) + `llm-wiki sync` CLI (explicit, scriptable). Daemon is silent by default — logs to file, never stdout, never blocks writes. Visible only via `llm-wiki status`. |
+| Talk pages | Cut. The crystallise skill covers uncertainty and ongoing debates as filed sessions. A separate talk file per page is friction with no payoff. |
+| Review paper section enforcement | Advisory. Skill guidance, not daemon enforcement. |
+| Video/audio ingest | Supported via optional pipeline: yt-dlp (audio-only download) → faster-whisper (local transcription, RTX 5080) → `.md` transcript → `add-source`. YouTube URLs and local audio/video files both handled. `source_type = podcast \| transcript`. Optional deps — not required for base install. |
