@@ -11,8 +11,14 @@ The single MCP tool. Stateless — all intelligence is in the harness. The daemo
 ### Call patterns
 
 ```json
-// Search — hybrid BM25 + vector, section-level results
+// Search — hybrid BM25 + vector, section-level results (wiki pages, default)
 { "q": "attention mechanism" }
+
+// Search — source chunks only (raw evidence layer)
+{ "q": "attention mechanism", "scope": "sources" }
+
+// Search — wiki sections + source chunks combined
+{ "q": "attention mechanism", "scope": "all" }
 
 // Navigate — page view with navigation context
 { "page": "attention-mechanism" }
@@ -23,6 +29,8 @@ The single MCP tool. Stateless — all intelligence is in the harness. The daemo
 // Multi-read — navigation view for each, concatenated
 { "pages": ["attention-mechanism", "transformer"] }
 ```
+
+`scope` defaults to `"wiki"`. Adversary skill uses `"all"`. Ingest search step uses `"all"` to surface related content in registered-but-not-yet-ingested sources.
 
 ---
 

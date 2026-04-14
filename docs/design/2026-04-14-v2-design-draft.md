@@ -81,7 +81,8 @@ llm-wiki add-source https://arxiv.org/abs/1706.03762 [--concept {name}]
      raw/{concept}/{key}.bib   ← bibtex metadata
 7. Register in sources table (slug=key, path=raw/{concept}/{key}.pdf,
    published_date from bibtex, source_type=paper|preprint|etc.)
-8. Print:
+8. Chunk .md by heading → embed each chunk (nomic-embed-text) → store in source_chunks
+9. Print:
      Read:    raw/attention/vaswani2017.md
      Cite as: [[vaswani2017.pdf]]
 ```
@@ -164,6 +165,16 @@ claim_sources (
     citation_number INTEGER,             -- daemon-assigned sequential number per page/section
     relationship    TEXT                 -- supports | refutes | gap
 )
+
+source_chunks (
+    id              INTEGER PRIMARY KEY,
+    source_id       INTEGER REFERENCES sources(id),
+    chunk_index     INTEGER NOT NULL,
+    heading         TEXT,                -- section heading if present
+    text            TEXT NOT NULL,
+    token_count     INTEGER,
+    embedding       FLOAT[1024]          -- nomic-embed-text, same model as sections
+)
 ```
 
 ### Why each table
@@ -172,11 +183,12 @@ claim_sources (
 - **sections**: the primary search unit. Section-level embeddings make search return useful results at the right granularity — not 3000-token pages, but the specific section that's relevant.
 - **links**: wikilink graph. Powers the navigation panel (links in, links out). Required for InfraNodus integration.
 - **sources**: source metadata with `published_date`. Recency is the only authority signal — no scoring system. `source_type = session` accommodates crystallised agent sessions as first-class sources.
-- **claims**: deterministically parsed from citation markers. Every sentence containing `[[raw/...]]` is a claim. No LLM in the daemon. `superseded_by` enables explicit supersession: old claim preserved and linked, not deleted.
+- **claims**: deterministically parsed from citation markers. Every sentence containing a `[[key.pdf]]` marker is a claim. No LLM in the daemon. `superseded_by` enables explicit supersession: old claim preserved and linked, not deleted.
 - **claim_sources**: the junction. `relationship` is populated by the adversary skill, not the daemon. Three values:
   - `supports` — source confirms the claim
-  - `refutes` — source contradicts the claim
+  - `refutes` — source contradicts the claim (either fidelity failure or supersession by newer source)
   - `gap` — source identifies this as an open question; claim is a known unknown
+- **source_chunks**: the raw evidence layer. Source `.md` files chunked by heading and embedded at `add-source` time. Enables semantic search over unsynth'd source material — catches what ingest missed, phrased differently. Queried by the adversary and ingest skills via `scope: "sources"` on the MCP tool.
 
 ### Claim types (following n7-ved's pattern)
 
@@ -319,11 +331,15 @@ The decision step surfaces non-obvious choices to the user — "this paper adds 
 **One tool.** Two call patterns. Everything else is CLI, skills scripts, or harness file tools.
 
 ```json
-{ "q": "attention mechanism" }
+{ "q": "attention mechanism" }                                        // wiki sections (default)
+{ "q": "attention mechanism", "scope": "sources" }                   // source chunks only
+{ "q": "attention mechanism", "scope": "all" }                       // wiki + source chunks
 { "page": "attention-mechanism" }
 { "page": "attention-mechanism", "section": "Scaled Dot-Product" }
 { "pages": ["attention-mechanism", "transformer"] }
 ```
+
+`scope` defaults to `"wiki"`. The adversary uses `"all"` — one call, one interface, searches compiled synthesis and raw source evidence. Ingest uses `"all"` in its search step to surface related content in registered-but-not-yet-ingested sources.
 
 ### Search response
 
@@ -452,6 +468,119 @@ From `PHILOSOPHY.md` in the v1 repo:
 | Single-file pages | P6 (v1) | **Updated** — pages may span sections, no structural enforcement |
 | No scoring systems | P10 | **Carried** — recency only |
 | Human judgment for contradictions | P11 | **Carried** — adversary skill, not daemon |
+
+---
+
+## Adversary Skill
+
+### Why it exists
+
+The ingest skill operates in synthesis mode — confirmatory, building toward a coherent page. It will naturally favour readings that fit the emerging narrative, gloss over caveats, overstate confidence, underweight limitations. This isn't a bug; it's the mode. The daemon extracts claims deterministically but leaves `relationship = NULL` — no verdict, no self-consistency.
+
+The adversary skill fixes both. It re-reads with a completely different posture: falsification-first, low temperature, skeptical. It catches what ingest missed because it reads differently, not because it has access to different information.
+
+**The adversary cannot be folded into ingest.** You cannot evaluate fidelity in the same cognitive mode that produced the claim.
+
+### Two failure modes, two responses
+
+**Fidelity failure** — the claim misrepresents its own source. Ingest read with synthesis eyes; the source actually hedges, caveats, or says something subtly different. Fix: edit the page directly. No ceremony, no supersession. The daemon picks up the change.
+
+**Supersession** — the claim was a fair reading at ingest time, but a newer source contradicts it. Fix: pause, surface to user, confirm, write new claim with `superseded_by` link. Old claim preserved in DB for provenance.
+
+Only supersession gets a user pause. Fidelity fixes are silent corrections.
+
+### Targeting
+
+Four entry points:
+
+| Mode | Scope | Use case |
+|---|---|---|
+| `virgin` | `relationship = NULL` | First pass after batch ingest |
+| `recency` | refuting source newer than supporting | Weekly hygiene run |
+| `page` | all claims on one page | Before citing that page heavily |
+| `claim` | single claim | Spot check |
+
+Default: `virgin`. The skill accepts a mode argument.
+
+### The flow
+
+```
+Step 1 — Target
+  Run the appropriate DB query. Collect claims as todo list.
+  Report: "Found N unevaluated claims across K pages."
+
+Step 2 — For each claim (todo loop):
+
+  a. COMMIT — state out loud:
+     "Evaluating: '[claim text]'
+      Source: [key] ([published_date])
+      Page: [slug] › [section]"
+
+  b. SEARCH — one MCP call, scope: "all"
+     {"q": "[claim as natural language]", "scope": "all"}
+     Returns: wiki section hits + source chunk hits combined.
+     The claim's own source chunks surface first — fidelity check material.
+     Other source chunks surface cross-source evidence.
+
+  c. ADVERSARIAL CHECK — falsification-first posture:
+     "What would have to be true for this claim to be wrong?
+      Does the cited source actually support this, or does it hedge?
+      Does any other source — especially a newer one — contradict it?"
+
+  d. VERDICT:
+     FIDELITY FAILURE → edit page directly, no pause. Move to next claim.
+     SUPERSEDED       → pause. Surface to user:
+                        "Claim: [X] ([source, date])
+                         Superseded by: [newer source, date] — [one sentence]
+                         Proposed new claim: [Y]
+                         Approve / Skip / Override?"
+     GAP              → set relationship = gap. No edit needed.
+     SUPPORTS         → set relationship = supports. Move on.
+
+  e. WRITE (if supersession approved):
+     Edit page: add new claim sentence with new citation.
+     Set claims.superseded_by on old claim row.
+     Daemon syncs both changes.
+
+  f. TICK — mark todo complete.
+
+Step 3 — Report
+  N claims evaluated. K supported, J gaps, M fidelity fixes (silent),
+  L supersessions (P approved, Q skipped).
+  List of superseded claims with their replacements.
+```
+
+### Prompt posture
+
+The evaluation sub-step runs at low temperature with explicit adversarial framing:
+
+```
+You are evaluating a claim adversarially. Your job is to falsify it, not support it.
+
+Claim: "{text}"
+Cited source: {key} ({published_date})
+
+Step 1: What would have to be true for this claim to be wrong?
+Step 2: Does the cited source actually assert this — or does it hedge, caveat,
+        or say something subtly different? Check the source chunks below.
+Step 3: Does any other source in the results contradict this, especially
+        a more recent one?
+Step 4: State your verdict — SUPPORTS / FIDELITY FAILURE / SUPERSEDED / GAP
+        One sentence of reasoning. No hedging. Pick the strongest verdict
+        the evidence supports.
+```
+
+### Skill conventions (borrowed from superpowers)
+
+- **Todo list as shared state** — survives multi-turn sessions, same pattern as ingest
+- **Commit step** — agent states what it's evaluating before doing it
+- **Surface only high-stakes decisions** — supersession gets user review; everything else is silent
+- **Low temperature explicitly stated** — the skill instructs the harness to use skeptic mode
+- **Falsification before confirmation** — the agent argues against the claim first
+
+### Claim granularity (settled here)
+
+Claim = the sentence(s) sharing one citation anchor. If `[[vaswani2017.pdf]]` appears at the end of a two-sentence logical unit, those two sentences are one claim. The daemon splits at citation boundaries, not sentence boundaries. The adversary evaluates at citation-anchor granularity — one verdict per anchor. Atomic enough for a clear verdict; natural enough that claims read as real sentences.
 
 ---
 
