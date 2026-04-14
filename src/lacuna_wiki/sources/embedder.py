@@ -10,6 +10,9 @@ _DEFAULT_MODEL = "nomic-embed-text:v1.5"
 
 
 _BATCH_SIZE = 32
+# nomic-embed-text has a 2048-token context window; ~4 chars/token gives ~8192 chars.
+# Truncate conservatively to avoid 500s from the llama.cpp server on long chunks.
+_MAX_CHARS = 8000
 
 
 @dataclass
@@ -74,7 +77,7 @@ def embed_texts(
 
     results: list[list[float]] = []
     for i in range(0, len(texts), _BATCH_SIZE):
-        batch = texts[i : i + _BATCH_SIZE]
+        batch = [t[:_MAX_CHARS] for t in texts[i : i + _BATCH_SIZE]]
         response = httpx.post(
             f"{url}/v1/embeddings",
             json={"model": model, "input": batch},
