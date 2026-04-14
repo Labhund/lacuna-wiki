@@ -4,7 +4,23 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lacuna-wiki"
-version = "2.0.0"
+version = "2.0.1"
+description = "Give your agent a knowledge graph that compounds."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Markus Williams" }]
+keywords = ["mcp", "knowledge-base", "obsidian", "agent", "research", "llm", "rag"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Indexing",
+]
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.0",
