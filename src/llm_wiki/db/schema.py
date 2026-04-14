@@ -3,9 +3,17 @@ from __future__ import annotations
 
 import duckdb
 
+_SEQUENCES = [
+    "CREATE SEQUENCE IF NOT EXISTS pages_id_seq START 1",
+    "CREATE SEQUENCE IF NOT EXISTS sections_id_seq START 1",
+    "CREATE SEQUENCE IF NOT EXISTS sources_id_seq START 1",
+    "CREATE SEQUENCE IF NOT EXISTS claims_id_seq START 1",
+    "CREATE SEQUENCE IF NOT EXISTS source_chunks_id_seq START 1",
+]
+
 _TABLES = [
     """CREATE TABLE IF NOT EXISTS pages (
-    id            INTEGER PRIMARY KEY,
+    id            INTEGER DEFAULT nextval('pages_id_seq') PRIMARY KEY,
     slug          TEXT UNIQUE NOT NULL,
     path          TEXT NOT NULL,
     title         TEXT,
@@ -13,7 +21,7 @@ _TABLES = [
     last_modified TIMESTAMP
 )""",
     """CREATE TABLE IF NOT EXISTS sections (
-    id           INTEGER PRIMARY KEY,
+    id           INTEGER DEFAULT nextval('sections_id_seq') PRIMARY KEY,
     page_id      INTEGER REFERENCES pages(id),
     position     INTEGER NOT NULL,
     name         TEXT NOT NULL,
@@ -27,7 +35,7 @@ _TABLES = [
     PRIMARY KEY (source_page_id, target_slug)
 )""",
     """CREATE TABLE IF NOT EXISTS sources (
-    id             INTEGER PRIMARY KEY,
+    id             INTEGER DEFAULT nextval('sources_id_seq') PRIMARY KEY,
     slug           TEXT UNIQUE NOT NULL,
     path           TEXT NOT NULL,
     title          TEXT,
@@ -37,7 +45,7 @@ _TABLES = [
     source_type    TEXT
 )""",
     """CREATE TABLE IF NOT EXISTS claims (
-    id                   INTEGER PRIMARY KEY,
+    id                   INTEGER DEFAULT nextval('claims_id_seq') PRIMARY KEY,
     page_id              INTEGER REFERENCES pages(id),
     section_id           INTEGER REFERENCES sections(id),
     text                 TEXT NOT NULL,
@@ -54,7 +62,7 @@ _TABLES = [
     PRIMARY KEY (claim_id, source_id)
 )""",
     """CREATE TABLE IF NOT EXISTS source_chunks (
-    id          INTEGER PRIMARY KEY,
+    id          INTEGER DEFAULT nextval('source_chunks_id_seq') PRIMARY KEY,
     source_id   INTEGER REFERENCES sources(id),
     chunk_index INTEGER NOT NULL,
     heading     TEXT,
@@ -67,6 +75,8 @@ _TABLES = [
 
 
 def init_db(conn: duckdb.DuckDBPyConnection) -> None:
-    """Create all tables. Safe to call on an existing DB (CREATE IF NOT EXISTS)."""
-    for statement in _TABLES:
-        conn.execute(statement)
+    """Create sequences and tables. Safe to call on an existing DB."""
+    for stmt in _SEQUENCES:
+        conn.execute(stmt)
+    for stmt in _TABLES:
+        conn.execute(stmt)
