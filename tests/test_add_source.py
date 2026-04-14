@@ -358,6 +358,18 @@ def test_add_youtube_source_writes_md_with_headings(vault, monkeypatch):
     assert "Hello and welcome" in content
 
 
+def test_add_youtube_source_writes_bib_sidecar(vault, monkeypatch):
+    monkeypatch.chdir(vault)
+    monkeypatch.setattr("subprocess.run", _make_fake_yt_dlp(_FAKE_VTT, _FAKE_YT_INFO))
+    CliRunner().invoke(add_source, [_YT_URL])
+    # channel="ML Conference", year=2023, title prefix "atten" → key "conference2023atten"
+    bib = vault / "raw" / "conference2023atten.bib"
+    assert bib.exists(), f".bib sidecar not written; raw/ contents: {list((vault / 'raw').iterdir())}"
+    content = bib.read_text()
+    assert "@misc{conference2023atten," in content
+    assert "ML Conference" in content
+
+
 def test_add_youtube_source_no_captions_exits_nonzero(vault, monkeypatch):
     monkeypatch.chdir(vault)
     monkeypatch.setattr(

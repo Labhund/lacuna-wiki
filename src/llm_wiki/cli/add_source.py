@@ -37,6 +37,44 @@ _CHUNK_STRATEGY = {
 }
 
 
+_BIB_TYPE_NOTES = {
+    "transcript": "YouTube video transcript",
+    "blog": "Blog post",
+    "url": "Web page",
+    "podcast": "Podcast transcript",
+    "note": "Personal note",
+    "session": "Research session",
+    "experiment": "Experiment log",
+}
+
+
+def _write_bib_sidecar(
+    dest_dir: Path,
+    key: str,
+    title: str | None,
+    authors: str | None,
+    pub_date: "date | None",
+    source_type: str,
+    url: str | None = None,
+) -> None:
+    """Write a minimal BibTeX .bib sidecar for non-PDF sources."""
+    lines = [f"@misc{{{key},"]
+    if authors:
+        lines.append(f"  author       = {{{authors}}},")
+    if title:
+        lines.append(f"  title        = {{{title}}},")
+    if pub_date:
+        lines.append(f"  year         = {{{pub_date.year}}},")
+        lines.append(f"  month        = {{{pub_date.month}}},")
+    if url:
+        lines.append(f"  howpublished = {{\\url{{{url}}}}},")
+    note = _BIB_TYPE_NOTES.get(source_type, "")
+    if note:
+        lines.append(f"  note         = {{{note}}}")
+    lines.append("}")
+    (dest_dir / f"{key}.bib").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 @click.command("add-source")
 @click.argument("input_path", metavar="PATH_OR_URL")
 @click.option("--concept", default="", help="Subdirectory within raw/ (e.g. machine-learning/attention)")
@@ -104,6 +142,8 @@ def add_source(
 
             md_dest = target_dir / f"{key}.md"
             md_dest.write_text(text, encoding="utf-8")
+            _write_bib_sidecar(target_dir, key, final_title, final_authors, final_date,
+                               source_type or "transcript", url=url)
             primary_dest = md_dest
             cite_ext = ".md"
             inferred_type = source_type or "transcript"
@@ -134,15 +174,6 @@ def add_source(
             key = (derive_key_from_bibtex(bibtex_str, conn) if bibtex_str
                    else key_from_url(url, conn))
 
-            md_dest = target_dir / f"{key}.md"
-            md_dest.write_text(text, encoding="utf-8")
-            if bibtex_str:
-                (target_dir / f"{key}.bib").write_text(bibtex_str, encoding="utf-8")
-
-            primary_dest = md_dest
-            cite_ext = ".md"
-            inferred_type = source_type or "url"
-
             # Metadata: CLI flags > bibtex > Jina headers
             final_title = title or parsed_meta.get("title") or jina_meta.get("title")
             final_authors = authors or parsed_meta.get("authors")
@@ -156,6 +187,18 @@ def add_source(
                     final_date = date.fromisoformat(jina_meta["published_time"])
                 except ValueError:
                     pass
+
+            md_dest = target_dir / f"{key}.md"
+            md_dest.write_text(text, encoding="utf-8")
+            if bibtex_str:
+                (target_dir / f"{key}.bib").write_text(bibtex_str, encoding="utf-8")
+            else:
+                _write_bib_sidecar(target_dir, key, final_title, final_authors, final_date,
+                                   source_type or "url", url=url)
+
+            primary_dest = md_dest
+            cite_ext = ".md"
+            inferred_type = source_type or "url"
 
     else:
         # --- File path ---
