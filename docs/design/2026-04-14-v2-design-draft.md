@@ -472,6 +472,7 @@ Note: `Open Questions (0 tok — empty)` surfaces a gap without any additional t
 | SQL queries (claims, contradictions, supersession) | Skills scripts — read-only DuckDB connection |
 | Source ingest, claim extraction | CLI + harness ingest skill |
 | Page writes | Harness file tools (Edit/Write) |
+| Adversary result commits | `llm-wiki adversary-commit` CLI — pauses daemon, writes relationship + timestamps |
 | Concept graph / gap detection | InfraNodus MCP server (separate tool) |
 | Lint, audit, git | CLI |
 
@@ -479,11 +480,14 @@ Note: `Open Questions (0 tok — empty)` surfaces a gap without any additional t
 
 ## Concurrency
 
-- Daemon: holds the single DuckDB read-write connection.
+- Daemon: holds the single DuckDB read-write connection. Derives all DB state from file content.
 - Skills scripts: open DuckDB read-only. Multiple concurrent readers supported by DuckDB.
 - Harness: never opens DuckDB directly. Reads via MCP tool or skills scripts. Writes files via file tools.
+- CLI write commands (`llm-wiki adversary-commit`): pause the daemon briefly, open DuckDB read-write, write results, close, daemon resumes. Used for adversary results (relationship, timestamps) which have no markdown representation and cannot be derived by the daemon from file changes.
 
-No write contention because there is exactly one writer by design.
+**Daemon pause mechanism:** CLI sends SIGUSR1 to daemon process. Daemon finishes in-flight event, releases DuckDB connection, acknowledges. CLI writes, closes connection, signals done. Daemon re-acquires. Total pause: milliseconds. Acceptable for an infrequently-run adversary on a personal tool.
+
+No write contention because there is exactly one active writer at any moment by design.
 
 ---
 
@@ -799,6 +803,8 @@ The output is a filed session (citable, dated, preserved) plus a wiki page (or u
 11. **Embedding serving mechanism**: how does the daemon call nomic-embed-text? HTTP endpoint (Ollama/llama.cpp server)? Python library import? What happens if GPU is busy? Does embedding block or queue?
 
 12. **Git integration**: "git as audit trail" is in the diagram. Who commits — daemon or harness? When? What format for commit messages? If harness commits (agent responsibility), the skill needs to encode the convention.
+
+13. **Daemon pause mechanism implementation**: SIGUSR1 + acknowledgment vs. lock file vs. daemon HTTP endpoint for coordinated write access. SIGUSR1 is the simplest; lock file is more portable. Decision can be made during implementation.
 
 ---
 
