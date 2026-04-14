@@ -135,7 +135,20 @@ Read the content. Determine: same claim? Nuance? Contradiction?
 
 Use Edit or Write tools to modify or create wiki pages.
 
-**Citation format:** `[[source-key.pdf]]` inline at the end of the sentence. Never author `|N` — citation numbers are daemon-assigned. The daemon watches `wiki/` and syncs automatically. Wait ~2s after writing before reading back.
+**Framing check — apply the claim type declared in Step 3a:**
+
+| Claim type | Required framing |
+|---|---|
+| Established consensus | State as fact, cite inline: `"...claim. [[key.ext]]"` |
+| Experimental result | Attribute + scope: `"[[key.ext]] demonstrates, on [N-parameter M-layer model / benchmark X], that..."` |
+| Novel hypothesis | Hedge verb: `"[[key.ext]] hypothesises / proposes / suggests that..."` |
+| Counter-consensus | Flag inline: `"Contrary to [view], [[key.ext]] argues that..."` |
+
+Never write source-specific claims in encyclopedic voice. `"The residual stream satisfies the Markov property"` is encyclopedic. `"[[key.md]] hypothesises that the residual stream satisfies the Markov property"` is attributed. Test: if removing the citation makes the sentence sound like a textbook, the framing is wrong.
+
+Experimental scope is part of the claim — never drop it. `"[[key.md]] demonstrates on a 270M-parameter model that X"` is different from `"X has been demonstrated"`.
+
+**Citation format:** `[[source-key.ext]]` inline at the end of the sentence. Never author `|N` — citation numbers are daemon-assigned. The daemon watches `wiki/` and syncs automatically. Wait ~2s after writing before reading back.
 
 **Link verification:** before finishing, confirm every concept from your commit declaration (Step 3a) appears as a `[[wikilink]]` in the text. A concept declared but not linked is a write error — either add the link or remove it from the declaration.
 
