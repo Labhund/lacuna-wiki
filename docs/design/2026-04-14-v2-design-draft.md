@@ -172,53 +172,31 @@ This is a skill script, not daemon behaviour. The daemon never evaluates claim r
 
 ---
 
-## Page Types
+## Pages
 
-Two types. Not interchangeable.
+Pages are just pages. The agent writes them. No imposed structure, no page types, no promotion events. The extra burden of deciding what kind of page to write is eliminated — the only question is what to write and where.
 
-### Nugget page
+The review paper quality is a **north star communicated in the skill as writing guidance** — not a mechanical property of the system. The ingest skill tells the agent: write like you're contributing to a review paper on this topic. The agent is intelligent; it structures content appropriately without being told how.
 
-Atomic, focused, no imposed structure. A single finding, technique, experimental result, or argument. Written freely during ingest — the agent writes what it needs to write, with full evidence and context preserved.
+A page that begins as one paragraph from one source and grows into a comprehensive multi-source document is not changing type. It is compounding. That is the entire point.
 
-A nugget is not a bare claim. It retains the semantic richness of the source:
+The only structural convention enforced across all pages is the citation format `[[raw/source|N]]`. Everything else — section headings, organisation, depth — is the agent's judgment. Callout markers (`[!gap]`, `[!analysis]`) are optional conventions the skill recommends, not requirements.
+
+A page early in its life:
 
 ```markdown
-# scaled-dot-product-attention-scaling
+# scaled-dot-product-attention
 
 Attention scores are computed as QK^T/√dk, where dk is the key vector dimension.
-This scaling prevents the dot products from growing large in high-dimensional spaces,
-which pushes softmax into regions of extremely small gradients — effectively making
-it a near-hard argmax. Without scaling, training becomes unstable for large dk.
-[[raw/vaswani2017.pdf|1]]
+This scaling prevents dot products from growing large in high-dimensional spaces,
+pushing softmax into low-gradient saturation. Without it, training becomes unstable
+for large dk. [[raw/vaswani2017.pdf|1]]
 
 > [!gap] How does this interact with sparse attention patterns?
-> No source yet. The saturation argument assumes dense attention — sparse variants
-> may behave differently.
+> No source yet.
 ```
 
-The claim DB extracts the citation-anchored sentence for search. The page retains the full paragraph for interrogation. These are different things.
-
-### Synthesis / Review page
-
-Emerges from stitching related nuggets. Has a structured skeleton because it is explicitly a review — comprehensive, cited, evolving. Created by deliberate agent action, not automatically.
-
-```markdown
-# attention-mechanism
-
-## Overview
-## Background
-## Mechanism
-## Variants
-## Applications
-## Limitations
-## Open Questions
-## Contradictions
-## References
-```
-
-Empty sections are visible gaps in the navigate response: `Open Questions (0 tok — empty)`.
-
-**Promotion**: a nugget becomes a synthesis page candidate when it has accumulated content from multiple independent sources and the agent judges it warrants a full review. Explicit decision — not automatic.
+The same page after more sources — more sections, more citations, more cross-references. No different in kind. Just more complete.
 
 ---
 
