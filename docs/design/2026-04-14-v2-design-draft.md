@@ -452,6 +452,78 @@ From `PHILOSOPHY.md` in the v1 repo:
 
 ---
 
+## Non-PDF Sources
+
+All source types are first-class. Same sources table, same citation format, same `add-source` CLI. The pipeline branches at file type.
+
+### Source taxonomy
+
+| source_type | Example key | Date signal | Authored by |
+|---|---|---|---|
+| `paper` | `vaswani2017` | `published_date` from bibtex | External |
+| `preprint` | `ho2020` | arXiv posted date | External |
+| `book` | `goodfellow2016` | publication year | External |
+| `blog` | `karpathy2023-rnn` | post date | External |
+| `url` | `openai-gpt4-report` | fetched or published date | External |
+| `session` | `2026-04-14-attn-investigation` | session date | LLM (crystallised) |
+| `note` | `2026-04-14-meeting-kv-cache` | note date | Human |
+| `experiment` | `2026-04-14-scaling-run` | experiment date | Human |
+
+Citation format is the same regardless of type — file extension reflects the primary file: `[[vaswani2017.pdf]]`, `[[karpathy2023-rnn.md]]`, `[[2026-04-14-attn-investigation.md]]`.
+
+### add-source pipeline by type
+
+```
+.pdf input  → bibtex fetch (CrossRef/Semantic Scholar) → PDF parse → .md
+URL input   → fetch + readability/jina → .md, extract date from page metadata
+.md input   → already markdown, register directly — no conversion
+              --date flag for sources without discoverable date
+              --type flag if type inference is wrong
+```
+
+### Date for session/note/experiment types
+
+`published_date` = date the reasoning occurred, not the date it was filed. A session from April 2026 filed in May 2026 has `published_date = 2026-04-14`. This matters for recency-based contradiction detection.
+
+---
+
+## Crystallise Skill
+
+The ingest skill mirrored. Where ingest asks "I found a source — what does the wiki already know?", crystallise asks "I ran an investigation — what did I learn, and where does it fit?"
+
+**The skill is semi-structured and dialogic.** Like brainstorming, it presents findings to the user, surfaces connections, and works toward a concrete output. The agent doesn't silently write — it thinks out loud, the researcher stays in the loop.
+
+**The flow:**
+
+```
+Step 1 — Present findings
+  Agent summarises what the session/investigation/experiment produced.
+  Key claims identified. User confirms or corrects the framing.
+
+Step 2 — Search for existing pages
+  For each key claim: wiki tool {"q": "[claim summary]"}
+  Report back: "This connects to [page], [page]. This is genuinely new."
+
+Step 3 — Dialogue
+  For each connection: surface the relationship.
+  "This experiment contradicts the claim in [page › section] from 2024."
+  "This analysis extends [page] but hasn't been tested against [page]."
+  User guides where each finding should land.
+
+Step 4 — Write
+  File session as source: sessions/{date}-{slug}.md
+  Register via add-source (source_type=session)
+  Update existing pages or create new page — same commit→search→decide loop as ingest.
+
+Step 5 — File
+  New wiki page or updated pages committed.
+  Session is now citable: [[{date}-{slug}.md]]
+```
+
+The output is a filed session (citable, dated, preserved) plus a wiki page (or updates to existing pages). The session serves as the source; the page is the synthesis.
+
+---
+
 ## What is Not In v2
 
 | Feature | Status |
