@@ -81,7 +81,12 @@ llm-wiki add-source https://arxiv.org/abs/1706.03762 [--concept {name}]
      raw/{concept}/{key}.bib   ← bibtex metadata
 7. Register in sources table (slug=key, path=raw/{concept}/{key}.pdf,
    published_date from bibtex, source_type=paper|preprint|etc.)
-8. Chunk .md by heading → embed each chunk (nomic-embed-text) → store in source_chunks
+8. Chunk .md → embed each chunk (nomic-embed-text) → store offsets + preview in source_chunks
+   Chunking strategy by source type:
+   - Paper/book: by heading (heading field = section title)
+   - Whisper transcript: by timestamp window (heading = "[HH:MM:SS]")
+   - Plain transcript/notes: by paragraph (double newline)
+   - Fallback: fixed-size 512 tokens with ~50 token overlap, heading = NULL
 9. Print:
      Read:    raw/attention/vaswani2017.md
      Cite as: [[vaswani2017.pdf]]
@@ -99,16 +104,18 @@ Cluster membership is the harness's judgment call, not a structural enforcement.
 
 ```
 wiki/
-  {concept}/         ← authored pages by cluster
+  {concept}/         ← authored pages by cluster (mutable, daemon watches)
   ...
 raw/
   {concept}/
     vaswani2017.pdf
-    vaswani2017.md   ← parsed, agent reads this
+    vaswani2017.md   ← parsed, agent reads this (immutable after add-source)
     vaswani2017.bib
-  ...
+  ...                ← immutable after registration. Do not edit manually.
 sessions/            ← crystallised agent sessions (source_type=session)
 ```
+
+`raw/` is write-once. The daemon does not watch it. If a source needs reprocessing (e.g. better PDF parser), run `llm-wiki add-source --replace` which rewrites the files and recomputes source_chunks rows.
 
 ---
 
@@ -170,9 +177,11 @@ source_chunks (
     id              INTEGER PRIMARY KEY,
     source_id       INTEGER REFERENCES sources(id),
     chunk_index     INTEGER NOT NULL,
-    heading         TEXT,                -- section heading if present
-    text            TEXT NOT NULL,
+    heading         TEXT,                -- section heading or timestamp window; NULL for unstructured
+    start_line      INTEGER NOT NULL,    -- offset into raw .md file
+    end_line        INTEGER NOT NULL,
     token_count     INTEGER,
+    preview         TEXT,                -- first ~200 chars for search result display only
     embedding       FLOAT[1024]          -- nomic-embed-text, same model as sections
 )
 ```
@@ -188,7 +197,7 @@ source_chunks (
   - `supports` — source confirms the claim
   - `refutes` — source contradicts the claim (either fidelity failure or supersession by newer source)
   - `gap` — source identifies this as an open question; claim is a known unknown
-- **source_chunks**: the raw evidence layer. Source `.md` files chunked by heading and embedded at `add-source` time. Enables semantic search over unsynth'd source material — catches what ingest missed, phrased differently. Queried by the adversary and ingest skills via `scope: "sources"` on the MCP tool.
+- **source_chunks**: the raw evidence layer. Source `.md` files chunked at `add-source` time, embeddings stored, offsets into the `.md` recorded. Full text lives in the `.md` only — the DB stores `start_line`/`end_line` and a short `preview` for search display. Permanently consistent: `raw/` files are immutable after registration, so offsets never go stale. No daemon involvement — `raw/` is write-once, `wiki/` is what the daemon watches.
 
 ### Claim types (following n7-ved's pattern)
 
