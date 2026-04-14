@@ -1,7 +1,12 @@
+import importlib.metadata
+
 import click
+
+_version = importlib.metadata.version("lacuna-wiki")
 
 
 @click.group()
+@click.version_option(_version, "--version", "-V", prog_name="lacuna")
 def cli():
     """lacuna — personal research knowledge substrate."""
     pass
