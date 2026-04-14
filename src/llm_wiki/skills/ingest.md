@@ -9,6 +9,24 @@ Ingest a source into the wiki. The source may be a registered PDF, URL, markdown
 
 ---
 
+## Mode
+
+The user declares the mode at the start of the session:
+
+| Mode | Declared by | Pause pattern |
+|---|---|---|
+| `standard` (default) | no declaration, or "standard" | One pause at Step 2 for concept list approval |
+| `auto` | "auto", "just run it", "no pauses" | No pauses — full autonomous loop |
+| `aligned` | "aligned", "walk me through this" | Pause per concept — present before writing |
+
+If no mode is declared, use standard.
+
+**Auto mode:** Skip the Step 2 pause entirely. Run the full todo loop without surfacing routing decisions — including the non-obvious decisions in Step 3d that standard mode would surface. The agent resolves these silently. Use for: batch ingest of trusted material, re-ingesting already-known sources, or when the user has explicitly opted out of the integration dialogue.
+
+**Aligned mode:** See the Aligned Mode section at the end of this skill.
+
+---
+
 ## Step 0 — Register the Source
 
 ```bash
@@ -67,7 +85,9 @@ Present the full list before starting:
 
 Wait for the user's response. Adjust if needed. Then proceed.
 
-**This is the only mandatory user pause.** The only other pauses are non-obvious routing decisions (see Step 3d) and supersession confirmations.
+**In auto mode:** skip this pause. Proceed directly to Step 3 with the full todo list as created.
+
+**This is the only mandatory user pause (in standard mode).** The only other pauses are non-obvious routing decisions (see Step 3d) and supersession confirmations.
 
 ---
 
