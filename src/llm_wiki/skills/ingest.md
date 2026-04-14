@@ -79,16 +79,22 @@ Mark each task `in_progress` before starting it; mark it `completed` when done. 
 
 State out loud before acting:
 > "I am going to write about [X]: [one sentence].
+>  Claim type: [established consensus | experimental result at [scale] | novel hypothesis | counter-consensus]
 >  Concepts I will link: [[slug-a]], [[slug-b]], [[slug-c]].
 >  But first I will search the wiki for similar content."
 
-This is not commentary — it is three forcing functions in one:
+Claim types:
+- **Established consensus** — widely accepted; cite inline: `"Attention computes a weighted sum. [[vaswani2017.pdf]]"`
+- **Experimental result** — demonstrated at a specific scale; attribute inline: `"[[hay2026wedon.md]] demonstrates, on a 270M-parameter model, that..."`
+- **Novel hypothesis** — proposed but not proven; hedge the verb: `"[[key.md]] hypothesises that..."`
+- **Counter-consensus** — contradicts established view; flag inline: `"Contrary to [view], [[key.md]] argues that..."`
 
-1. **The one sentence** generates your search query. Articulating it first makes the next search precise.
-2. **The slug list** normalises link targets before you write a single word. Declaring `[[kv-cache]]` upfront prevents `[[KV Cache]]`, `[[kv cache]]`, and `[[key-value-cache]]` drift across the session. If a slug doesn't exist yet, note it — you'll create that page later in this session.
-3. **The constraint:** if a concept is not in your commit declaration, it does not appear as a `[[wikilink]]` in the text. Forces completeness before writing, not after.
+Claim type declared here determines framing in Step 3e.
 
-The commit declaration is your best effort, not a completeness guarantee — Step 4 catches what it misses.
+The commit is not commentary — it is three forcing functions:
+1. **The one sentence** is your search query. Articulating it first makes Step 3b precise.
+2. **The slug list** normalises link targets before you write a word. `[[kv-cache]]` declared here cannot drift to `[[KV Cache]]` in the text. Undeclared concepts do not appear as wikilinks.
+3. **The constraint:** if it is not in the commit, it is not a wikilink. Forces completeness before writing, not after.
 
 ### b. Search
 
