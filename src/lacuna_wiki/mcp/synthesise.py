@@ -12,16 +12,22 @@ def _label_to_slug(label: str) -> str:
 
 
 def _source_diversity(conn: duckdb.DuckDBPyConnection, slugs: list[str]) -> int:
-    """Count distinct sources cited across member pages via links to registered source slugs."""
+    """Count distinct sources cited across member pages by scanning section content."""
     if not slugs:
         return 0
     placeholders = ','.join('?' * len(slugs))
     row = conn.execute(f"""
-        SELECT COUNT(DISTINCT l.target_slug)
-        FROM links l
-        JOIN pages p ON l.source_page_id = p.id
-        JOIN sources s ON l.target_slug = s.slug
-        WHERE p.slug IN ({placeholders})
+        SELECT COUNT(DISTINCT citation)
+        FROM (
+            SELECT UNNEST(regexp_extract_all(
+                content,
+                '\\[\\[([a-z0-9][a-z0-9_./ -]*\\.(pdf|md|bib|txt))\\]\\]',
+                1
+            )) AS citation
+            FROM sections s
+            JOIN pages p ON s.page_id = p.id
+            WHERE p.slug IN ({placeholders})
+        )
     """, slugs).fetchone()
     return row[0] if row else 0
 

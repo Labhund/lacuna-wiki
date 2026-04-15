@@ -134,3 +134,35 @@ def test_commit_synthesis_not_found(vault):
     _, conn = vault
     result = commit_synthesis(conn, 9999, "slug")
     assert "not found" in result.lower() or "error" in result.lower()
+
+
+def test_source_diversity_scans_section_content(vault):
+    """Diversity is detected from section content even when sources table is empty."""
+    from lacuna_wiki.mcp.synthesise import cluster_queue
+    vault_root, conn = vault
+    # No row inserted into sources table — diversity must come from content scan
+    write_and_sync(vault_root, conn, "p.md", "# p\n\n## S\n\nSee [[paper-a.pdf]].\n")
+    write_and_sync(vault_root, conn, "q.md", "# q\n\n## S\n\nSee [[paper-b.pdf]] and [[paper-a.pdf]].\n")
+    make_cluster(conn, ["p", "q"], label="Multi-source cluster")
+    result = cluster_queue(conn)
+    assert "2" in result or "distinct" in result.lower()
+    assert "single-source" not in result.lower()
+
+
+def test_source_diversity_single_source(vault):
+    from lacuna_wiki.mcp.synthesise import cluster_queue
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "x.md", "# x\n\n## S\n\nClaim. [[only-one.pdf]]\n")
+    write_and_sync(vault_root, conn, "y.md", "# y\n\n## S\n\nAnother claim. [[only-one.pdf]]\n")
+    make_cluster(conn, ["x", "y"], label="Single-source cluster")
+    result = cluster_queue(conn)
+    assert "single-source" in result.lower()
+
+
+def test_source_diversity_no_citations(vault):
+    from lacuna_wiki.mcp.synthesise import cluster_queue
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "u.md", "# u\n\n## S\n\nNo citations here.\n")
+    make_cluster(conn, ["u"], label="Unknown diversity cluster")
+    result = cluster_queue(conn)
+    assert "unknown" in result.lower()
