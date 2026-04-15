@@ -26,6 +26,8 @@ def dispatch_wiki(
     link_audit: "bool | str | None" = None,
     mark_swept: bool = False,
     cluster: dict | None = None,
+    synthesise: "bool | int | str | None" = None,
+    commit: dict | None = None,
     dim: int = 768,
 ) -> str:
     """Core dispatch logic, separated from MCP transport for testing."""
@@ -34,6 +36,32 @@ def dispatch_wiki(
         link_audit = True
     elif isinstance(link_audit, str) and link_audit.lower() == "false":
         link_audit = None
+
+    if isinstance(synthesise, str) and synthesise.lower() == "true":
+        synthesise = True
+    elif isinstance(synthesise, str) and synthesise.lower() == "false":
+        synthesise = None
+    elif isinstance(synthesise, str) and synthesise.isdigit():
+        synthesise = int(synthesise)
+
+    # Mutual exclusion guard
+    if synthesise is not None and link_audit is not None:
+        return "Error: synthesise and link_audit are mutually exclusive."
+
+    # synthesise mode
+    if synthesise is not None:
+        from lacuna_wiki.mcp.synthesise import (
+            cluster_queue,
+            cluster_detail,
+            commit_synthesis,
+        )
+        if synthesise is True:
+            return cluster_queue(conn)
+        cluster_id = int(synthesise)
+        if commit:
+            return commit_synthesis(conn, cluster_id, commit["slug"])
+        return cluster_detail(conn, cluster_id)
+
     # link_audit mode
     if link_audit is not None:
         from lacuna_wiki.mcp.audit import (
@@ -95,6 +123,8 @@ def make_wiki_tool(
         link_audit: "bool | str | None" = None,
         mark_swept: bool = False,
         cluster: dict | None = None,
+        synthesise: "bool | int | str | None" = None,
+        commit: dict | None = None,
     ) -> str:
         """Search the wiki or navigate to a page.
 
@@ -112,19 +142,24 @@ def make_wiki_tool(
         Sweep commit: provide `link_audit="slug"` and `mark_swept=True` to mark the
         page swept. Optionally include `cluster={"members": [...], "label": "...",
         "rationale": "..."}` to create or extend a synthesis cluster.
+
+        Synthesise: provide `synthesise=True` for cluster queue. `synthesise=N` for
+        cluster detail. `synthesise=N` with `commit={"slug": "..."}` to mark complete.
         """
         if isinstance(conn_or_path, Path):
-            # Read-write connection — mark_swept writes to DB
+            # Read-write connection — mark_swept/commit writes to DB
             conn = get_connection(conn_or_path, readonly=False)
             try:
                 return dispatch_wiki(conn, embed_fn, q=q, scope=scope,
                                      page=page, section=section, pages=pages,
                                      link_audit=link_audit, mark_swept=mark_swept,
-                                     cluster=cluster, dim=dim)
+                                     cluster=cluster, synthesise=synthesise,
+                                     commit=commit, dim=dim)
             finally:
                 conn.close()
         else:
             return dispatch_wiki(conn_or_path, embed_fn, q=q, scope=scope,
                                  page=page, section=section, pages=pages,
                                  link_audit=link_audit, mark_swept=mark_swept,
-                                 cluster=cluster, dim=dim)
+                                 cluster=cluster, synthesise=synthesise,
+                                 commit=commit, dim=dim)

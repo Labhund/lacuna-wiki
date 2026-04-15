@@ -142,3 +142,58 @@ def test_link_audit_true_mark_swept_returns_error(vault):
     vault_root, conn = vault
     result = dispatch_wiki(conn, fake_embed, link_audit=True, mark_swept=True)
     assert "error" in result.lower() or "slug" in result.lower()
+
+
+def test_synthesise_true_returns_queue(vault):
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "page-a.md",
+                   "# page-a\n\n## S\n\n" + ("Word " * 120) + "\n")
+    dispatch_wiki(conn, fake_embed, link_audit="page-a", mark_swept=True,
+                  cluster={"members": ["page-a"], "label": "Test", "rationale": "r"})
+    result = dispatch_wiki(conn, fake_embed, synthesise=True)
+    assert "Test" in result or "pending" in result.lower()
+
+
+def test_synthesise_int_returns_detail(vault):
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "page-a.md",
+                   "# page-a\n\n## S\n\n" + ("Word " * 120) + "\n")
+    dispatch_wiki(conn, fake_embed, link_audit="page-a", mark_swept=True,
+                  cluster={"members": ["page-a"], "label": "Test", "rationale": "r"})
+    cid = conn.execute(
+        "SELECT id FROM synthesis_clusters WHERE concept_label='Test'"
+    ).fetchone()[0]
+    result = dispatch_wiki(conn, fake_embed, synthesise=cid)
+    assert "page-a" in result
+    assert "suggested slug" in result.lower()
+
+
+def test_synthesise_commit(vault):
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "page-a.md",
+                   "# page-a\n\n## S\n\n" + ("Word " * 120) + "\n")
+    dispatch_wiki(conn, fake_embed, link_audit="page-a", mark_swept=True,
+                  cluster={"members": ["page-a"], "label": "Test", "rationale": "r"})
+    cid = conn.execute(
+        "SELECT id FROM synthesis_clusters WHERE concept_label='Test'"
+    ).fetchone()[0]
+    result = dispatch_wiki(conn, fake_embed, synthesise=cid,
+                           commit={"slug": "synthesis-test"})
+    assert "synthesis-test" in result
+    row = conn.execute(
+        "SELECT status FROM synthesis_clusters WHERE id=?", [cid]
+    ).fetchone()
+    assert row[0] == "completed"
+
+
+def test_synthesise_string_true_normalised(vault):
+    """Agents may pass synthesise='true' as a string."""
+    _, conn = vault
+    result = dispatch_wiki(conn, fake_embed, synthesise="true")
+    assert "0" in result or "no pending" in result.lower()
+
+
+def test_synthesise_and_link_audit_mutual_exclusion(vault):
+    _, conn = vault
+    result = dispatch_wiki(conn, fake_embed, synthesise=True, link_audit=True)
+    assert "error" in result.lower() or "mutually exclusive" in result.lower()
