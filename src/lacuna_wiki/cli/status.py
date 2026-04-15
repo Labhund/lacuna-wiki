@@ -53,11 +53,16 @@ def _sweep_counts(conn) -> dict[str, int]:
     except Exception:
         synthesis_queue = 0
 
+    synthesised_pages = conn.execute(
+        "SELECT COUNT(*) FROM pages WHERE synthesised_into IS NOT NULL"
+    ).fetchone()[0]
+
     return {
         "research gaps": research_gaps,
         "ghost pages": ghost_pages,
         "sweep backlog": sweep_backlog,
         "synthesis queue": synthesis_queue,
+        "synthesised pages": synthesised_pages,
     }
 
 
@@ -93,6 +98,7 @@ def status() -> None:
         tbl.add_row("ghost pages", str(sweep["ghost pages"]))
         tbl.add_row("sweep backlog", str(sweep["sweep backlog"]))
         tbl.add_row("synthesis queue", str(sweep["synthesis queue"]))
+        tbl.add_row("synthesised pages", str(sweep["synthesised pages"]))
     except Exception:
         pass  # pre-v3 DB — skip sweep rows gracefully
 

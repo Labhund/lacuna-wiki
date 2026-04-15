@@ -67,6 +67,13 @@ def test_status_shows_sweep_rows(vault, monkeypatch):
     assert "synthesis queue" in result.output
 
 
+def test_status_shows_synthesised_pages_row(vault, monkeypatch):
+    monkeypatch.chdir(vault)
+    result = CliRunner().invoke(status)
+    assert result.exit_code == 0, result.output
+    assert "synthesised pages" in result.output
+
+
 def test_status_sweep_backlog_counts_unswept_pages(vault, monkeypatch):
     from lacuna_wiki.daemon.sync import sync_page
     from pathlib import Path
