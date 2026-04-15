@@ -144,6 +144,14 @@ Windows support is in progress (Linux/macOS fully supported today).
 
 ---
 
+## [[Wikilink]] Cleanup
+The agents are given detailed instructions that enforce proactive addition of [[wikilinks]] but sometimess (especially using smaller local models!) your agent will miss a few. For now periodically ask your agent to: 
+- *"please crawl ~/path/to/vault and add all [[wikilinks]] for proper nouns and key concepts in each page where they are missing"*
+
+> Planned Feature: Dedicated skill and tool to help your agent discover pages that are likely missing [[wikilinks]]
+
+---
+
 ## Manual MCP Setup
 
 **Claude Desktop / Claude Code (`~/.claude/mcp.json`)**
