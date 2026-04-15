@@ -58,7 +58,9 @@ If the `wiki` MCP tool is unavailable: use the Read tool on individual wiki file
 
 ## Step 0 — Register the Source
 
-Note: For url's (arxiv papers, YouTube links) you run the following command directly on the url, the engine handles the extraction, no extra tools required.
+> Note: For url's (arxiv papers, YouTube links, blog posts) you run the following command directly on the url, the engine handles the extraction. 
+> No extra tools required.
+
 ```bash
 lacuna add-source path/or/url   # no --concept yet
 ```
@@ -114,7 +116,8 @@ Rules:
 
 Once the cluster is confirmed, move the raw source into the matching subtree:
 
-Note: When moving a source ONLY enter the key 'source', do NOT enter 'source.md' or 'source.pdf' 'lacuna move-source' moves all files related to the source in one go.
+> Note: When moving a source ONLY enter the key 'source', do NOT enter 'source.md' or 'source.pdf'.
+> 'lacuna move-source' moves all files related to the source in one go.
 ```bash
 lacuna move-source KEY --concept machine-learning/training
 ```
