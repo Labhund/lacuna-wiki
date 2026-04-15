@@ -58,6 +58,7 @@ If the `wiki` MCP tool is unavailable: use the Read tool on individual wiki file
 
 ## Step 0 — Register the Source
 
+Note: For url's (arxiv papers, YouTube links) you run the following command directly on the url, the engine handles the extraction, no extra tools required.
 ```bash
 lacuna add-source path/or/url   # no --concept yet
 ```
