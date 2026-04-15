@@ -77,7 +77,7 @@ lacuna status
 
 ## Step 1 — Structured Source Analysis
 
-Read the source in full. For local files: use the Read tool. For URLs: fetch the page.
+Read the source in full. For local files: use the Read tool. For URLs: fetch the page. Registering the source in Step 0 creates a source.md for you to read. Do NOT attempt to read a PDF file directly you will get a binary output. 
 
 Output this structure before creating any todos:
 
