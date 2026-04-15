@@ -55,3 +55,38 @@ def test_status_shows_row_counts(vault, monkeypatch):
     conn.close()
     result = CliRunner().invoke(status)
     assert "1" in result.output
+
+
+def test_status_shows_sweep_rows(vault, monkeypatch):
+    monkeypatch.chdir(vault)
+    result = CliRunner().invoke(status)
+    assert result.exit_code == 0, result.output
+    assert "research gaps" in result.output
+    assert "ghost pages" in result.output
+    assert "sweep backlog" in result.output
+    assert "synthesis queue" in result.output
+
+
+def test_status_sweep_backlog_counts_unswept_pages(vault, monkeypatch):
+    from lacuna_wiki.daemon.sync import sync_page
+    from pathlib import Path
+
+    monkeypatch.chdir(vault)
+
+    conn = duckdb.connect(str(db_path(vault)))
+    try:
+        conn.execute("LOAD fts")
+    except Exception:
+        pass
+
+    def fake_embed(texts):
+        return [[1.0] + [0.0] * 767 for _ in texts]
+
+    page = vault / "wiki" / "concept.md"
+    page.write_text("# concept\n\n## S1\n\n" + ("Word " * 120) + "\n")
+    sync_page(conn, vault, Path("wiki/concept.md"), fake_embed)
+    conn.close()
+
+    result = CliRunner().invoke(status)
+    assert result.exit_code == 0, result.output
+    assert "sweep backlog" in result.output
