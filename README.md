@@ -242,6 +242,17 @@ openclaw mcp set lacuna '{"command":"lacuna","args":["mcp"],"env":{"LACUNA_VAULT
 
 ---
 
+## Upgrading
+
+```bash
+pip install --upgrade lacuna-wiki
+lacuna sync
+```
+
+`lacuna sync` applies any schema migrations automatically — safe to run on every upgrade. If the daemon is running, stop it first (`lacuna stop`) and restart after sync.
+
+---
+
 ## License
 
 MIT © Markus Williams, 2026
