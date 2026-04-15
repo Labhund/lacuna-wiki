@@ -100,7 +100,7 @@ def _synthesis_tables(dim: int = 768) -> list[str]:
     concept_label    TEXT,
     agent_rationale  TEXT,
     status           TEXT DEFAULT 'pending',
-    queued_at        TIMESTAMPTZ DEFAULT now()
+    queued_at        TIMESTAMP DEFAULT now()
 )""",
         """CREATE TABLE IF NOT EXISTS synthesis_cluster_members (
     cluster_id  INTEGER REFERENCES synthesis_clusters(id),
@@ -171,7 +171,7 @@ def _migrate_v3_sweep(conn: duckdb.DuckDBPyConnection, dim: int) -> None:
     constraint error. The side table avoids this entirely.
     """
     conn.execute(
-        "ALTER TABLE pages ADD COLUMN IF NOT EXISTS last_swept TIMESTAMPTZ"
+        "ALTER TABLE pages ADD COLUMN IF NOT EXISTS last_swept TIMESTAMP"
     )
     for stmt in _SYNTHESIS_SEQUENCES:
         conn.execute(stmt)
