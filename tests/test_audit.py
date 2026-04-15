@@ -153,6 +153,34 @@ def test_page_audit_no_unlinked_when_all_wikilinked(vault):
     assert not any("attention" in l for l in unlinked_lines)
 
 
+def test_page_audit_no_substring_false_positives(vault):
+    """Short slug 'ha' must not match inside 'phase', 'that', 'thermal' etc."""
+    from lacuna_wiki.mcp.audit import page_audit
+    vault_root, conn = vault
+    # Create a page whose slug is a short token that appears as a substring elsewhere
+    write_and_sync(vault_root, conn, "ha.md",
+                   "# ha\n\n## S\n\nHA is a protein.\n")
+    # Page whose text contains 'phase', 'that', 'thermal' but NOT standalone 'ha'
+    content = "# thermodynamics\n\n## S\n\n" + (
+        "The phase transition that happens in thermal systems is fascinating. " * 20
+    ) + "\n"
+    write_and_sync(vault_root, conn, "thermodynamics.md", content)
+    result = page_audit(conn, "thermodynamics", fake_embed)
+    lines = result.split("\n")
+    in_unlinked = False
+    unlinked_lines = []
+    for line in lines:
+        if "unlinked candidates" in line.lower():
+            in_unlinked = True
+        elif in_unlinked and "synthesis" in line.lower():
+            break
+        elif in_unlinked:
+            unlinked_lines.append(line)
+    assert not any("[[ha]]" in l for l in unlinked_lines), (
+        "short slug 'ha' matched as substring — word boundary check failed"
+    )
+
+
 # ---------------------------------------------------------------------------
 # mark_swept
 # ---------------------------------------------------------------------------

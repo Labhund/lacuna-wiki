@@ -169,9 +169,9 @@ def _top_unlinked_candidates(
     ).fetchall()
 
     for slug, title in rows:
-        count = len(re.findall(re.escape(slug), body_stripped, re.IGNORECASE))
+        count = len(re.findall(r'\b' + re.escape(slug) + r'\b', body_stripped, re.IGNORECASE))
         if title and title != slug:
-            count += len(re.findall(re.escape(title), body_stripped, re.IGNORECASE))
+            count += len(re.findall(r'\b' + re.escape(title) + r'\b', body_stripped, re.IGNORECASE))
         if count > 0:
             candidates.append((slug, count))
 
@@ -246,9 +246,9 @@ def _unlinked_with_sections(
 
     results = []
     for cand_slug, cand_title in other_pages:
-        patterns = [re.escape(cand_slug)]
+        patterns = [r'\b' + re.escape(cand_slug) + r'\b']
         if cand_title and cand_title != cand_slug:
-            patterns.append(re.escape(cand_title))
+            patterns.append(r'\b' + re.escape(cand_title) + r'\b')
 
         per_section: list[tuple[str, int]] = []
         for sec_name, sec_content in section_rows:

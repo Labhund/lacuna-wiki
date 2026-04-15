@@ -108,6 +108,8 @@ For each unlinked candidate, one at a time:
 
 Apply with Edit. Verify the link was written. Do not batch multiple candidates into one edit.
 
+**Slug casing rule:** slugs are always lowercase. Write `[[slug]]`, never `[[Slug]]` or `[[SLUG]]`. If you need display text to differ from the slug — capitalisation, plurals, mid-sentence phrasing — use the pipe syntax: `[[slug|Slug]]`, `[[slug|slugs]]`, `[[nav17-pain-signaling|NaV1.7 pain signaling]]`. Never put a wikilink inside a `##` section heading.
+
 **Ghost page rule:** if an unlinked candidate has no existing page (ghost page), still add the `[[wikilink]]`. This reinforces the research gap signal — more pages linking to a ghost increases its priority.
 
 ### c. Mark Swept
