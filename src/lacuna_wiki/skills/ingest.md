@@ -25,6 +25,8 @@ If no mode is declared, use standard.
 
 **Aligned mode:** See the Aligned Mode section at the end of this skill.
 
+
+
 ---
 
 ## MCP Tool Reference

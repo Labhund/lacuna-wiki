@@ -242,7 +242,10 @@ def _sync_claims(
 
     new_texts = {c.text for c in all_citations}
 
-    # Delete removed claims and their claim_sources
+    # Delete removed claims and their claim_sources.
+    # claim_sources.claim_id has no FK (DuckDB checks FKs against committed
+    # state, making within-transaction cross-table deletes unreliable), so
+    # order is enforced here: claim_sources first, then claims.
     for old_text, old_id in existing.items():
         if old_text not in new_texts:
             conn.execute("DELETE FROM claim_sources WHERE claim_id=?", [old_id])

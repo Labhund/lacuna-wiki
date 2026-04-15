@@ -59,7 +59,7 @@ def _tables(dim: int) -> list[str]:
     last_adversary_check TIMESTAMP
 )""",
         """CREATE TABLE IF NOT EXISTS claim_sources (
-    claim_id        INTEGER REFERENCES claims(id),
+    claim_id        INTEGER,                            -- plain int: DuckDB FK checks committed state, making cross-table deletes within a transaction impossible
     source_id       INTEGER REFERENCES sources(id),
     citation_number INTEGER,
     relationship    TEXT,
@@ -80,9 +80,59 @@ def _tables(dim: int) -> list[str]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Schema versioning and migrations
+# ---------------------------------------------------------------------------
+
+_CURRENT_VERSION = 2
+
+
+def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
+    try:
+        row = conn.execute("SELECT version FROM schema_version").fetchone()
+        return row[0] if row else 0
+    except Exception:
+        return 0
+
+
+def _set_schema_version(conn: duckdb.DuckDBPyConnection, version: int) -> None:
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)")
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version VALUES (?)", [version])
+
+
+def _migrate_v2_claim_sources_no_fk(
+    conn: duckdb.DuckDBPyConnection, dim: int
+) -> None:
+    """Recreate claim_sources with claim_id as a plain INTEGER (no FK).
+
+    DuckDB checks FK constraints against the committed snapshot rather than
+    the current transaction's own writes, making it impossible to delete
+    claim_sources then claims within the same transaction. DuckDB also does
+    not support ON DELETE CASCADE. Dropping the FK matches the same workaround
+    already used for claims.superseded_by. Referential integrity is enforced
+    by explicit deletion order in sync.py. Relationship values are lost but
+    sync repopulates them.
+    """
+    conn.execute("DROP TABLE IF EXISTS claim_sources")
+    conn.execute("""CREATE TABLE claim_sources (
+    claim_id        INTEGER,
+    source_id       INTEGER REFERENCES sources(id),
+    citation_number INTEGER,
+    relationship    TEXT,
+    checked_at      TIMESTAMP,
+    PRIMARY KEY (claim_id, source_id)
+)""")
+
+
 def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
     """Create sequences and tables. Safe to call on an existing DB."""
     for stmt in _SEQUENCES:
         conn.execute(stmt)
     for stmt in _tables(dim):
         conn.execute(stmt)
+
+    version = _get_schema_version(conn)
+    if version < 2:
+        _migrate_v2_claim_sources_no_fk(conn, dim)
+        _set_schema_version(conn, 2)
