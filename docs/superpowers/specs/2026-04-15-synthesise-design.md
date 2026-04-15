@@ -62,7 +62,7 @@ def test_init_db_is_idempotent_v4(vault):
     tables = conn.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='main'"
     ).fetchone()[0]
-    assert tables == 12  # unchanged
+    assert tables >= 12  # v4 adds no new tables; guard against regression not exact count
 ```
 
 - [ ] **Run tests to verify they fail**
@@ -122,6 +122,10 @@ git commit -m "feat: schema v4 — synthesised_into on pages, synthesis_page_slu
 
 The `%% ... %%` Obsidian comment block must be invisible to the body hash so adding a synthesised-into notice does not trigger a re-index. A shared helper strips all `%%...%%` blocks before hashing. The same regex detects `synthesised_into` value and writes it to the DB on sync.
 
+`_body_hash` already exists in `sync.py` as a one-liner. **Replace it** — do not add a second function alongside it.
+
+The `synthesised_into` update goes unconditionally after the upsert block (after both the INSERT and UPDATE paths), not inside either branch. The correct placement: immediately after the `conn.commit()` call that follows the upsert, before `_update_mean_embedding`.
+
 ### Steps
 
 - [ ] **Write failing tests**
@@ -167,6 +171,24 @@ def test_sync_detects_synthesised_into(vault):
     sync_page(conn, vault, Path("wiki/concept.md"), fake_embed)
     row = conn.execute("SELECT synthesised_into FROM pages WHERE slug='concept'").fetchone()
     assert row[0] == "synthesis-concept"
+
+def test_sync_detects_synthesised_into_case_insensitive(vault):
+    """Notice detection must be case-insensitive."""
+    from lacuna_wiki.daemon.sync import sync_page
+    from lacuna_wiki.vault import db_path
+    import duckdb
+    from pathlib import Path
+
+    conn = duckdb.connect(str(db_path(vault)))
+    init_db(conn)
+
+    page = vault / "wiki" / "concept2.md"
+    page.write_text(
+        "# concept2\n\n%% Synthesised-Into: [[synthesis-concept]] %%\n\n## S1\n\nContent.\n"
+    )
+    sync_page(conn, vault, Path("wiki/concept2.md"), fake_embed)
+    row = conn.execute("SELECT synthesised_into FROM pages WHERE slug='concept2'").fetchone()
+    assert row[0] == "synthesis-concept"
 ```
 
 - [ ] **Run tests to verify they fail**
@@ -176,13 +198,17 @@ python -m pytest tests/test_daemon_integration.py::test_body_hash_ignores_obsidi
 ```
 Expected: FAIL.
 
-- [ ] **Add `_strip_obsidian_comments` and update `_body_hash` and `sync_page`**
+- [ ] **Replace `_body_hash` and add helpers in `sync.py`**
 
-In `sync.py`, after the imports:
+Add to imports: `import re` (if not already present).
+
+Replace the existing `_body_hash` one-liner and add helpers directly above it:
 
 ```python
 _OBSIDIAN_COMMENT_RE = re.compile(r'%%.*?%%', re.DOTALL)
-_SYNTHESISED_INTO_RE = re.compile(r'%%\s*synthesised-into:\s*\[\[([^\]]+)\]\]\s*%%')
+_SYNTHESISED_INTO_RE = re.compile(
+    r'%%\s*synthesised-into:\s*\[\[([^\]]+)\]\]\s*%%', re.IGNORECASE
+)
 
 def _strip_obsidian_comments(text: str) -> str:
     return _OBSIDIAN_COMMENT_RE.sub('', text)
@@ -191,7 +217,7 @@ def _body_hash(body: str) -> str:
     return hashlib.sha256(_strip_obsidian_comments(body).encode("utf-8")).hexdigest()[:24]
 ```
 
-In `sync_page`, after the page row is written/updated, add:
+After `conn.commit()` and before `_update_mean_embedding(conn, page_id)` in `sync_page`, add:
 
 ```python
 m = _SYNTHESISED_INTO_RE.search(body)
@@ -205,7 +231,7 @@ conn.execute(
 - [ ] **Run tests to verify they pass**
 
 ```bash
-python -m pytest tests/test_daemon_integration.py::test_body_hash_ignores_obsidian_comments tests/test_daemon_integration.py::test_sync_detects_synthesised_into -v
+python -m pytest tests/test_daemon_integration.py::test_body_hash_ignores_obsidian_comments tests/test_daemon_integration.py::test_sync_detects_synthesised_into tests/test_daemon_integration.py::test_sync_detects_synthesised_into_case_insensitive -v
 ```
 Expected: PASS.
 
@@ -226,6 +252,8 @@ git commit -m "feat: strip Obsidian comments from body hash; detect synthesised-
 
 Synthesised pages must be invisible to sweep. `_sweep_queue` filters them out. `_synthesis_candidates` excludes them from candidate pools. `_upsert_cluster` reopens a completed cluster when any proposed member matches its `synthesis_page_slug`.
 
+When reopening a completed cluster, update `concept_label` and `agent_rationale` to the incoming values — a more descriptive label from a later sweep should win. Known limitation: if a member slug matches `synthesis_page_slug` in multiple completed clusters (edge case: post-merge revision cycle), only the first match is reopened.
+
 ### Steps
 
 - [ ] **Write failing tests**
@@ -234,15 +262,24 @@ Synthesised pages must be invisible to sweep. `_sweep_queue` filters them out. `
 def test_sweep_queue_excludes_synthesised_pages(vault):
     from lacuna_wiki.mcp.audit import vault_audit
     vault_root, conn = vault
-    # Sync a substantive page
     write_and_sync(vault_root, conn, "concept.md",
                    "# concept\n\n## S\n\n" + ("Word " * 120) + "\n")
-    # Mark it synthesised
     conn.execute("UPDATE pages SET synthesised_into='synthesis-concept' WHERE slug='concept'")
     result = vault_audit(conn)
-    assert "concept" not in result or "sweep queue" not in result.lower()
-    # sweep backlog count should be 0
-    assert "sweep backlog" in result.lower()
+    # sweep queue must appear in output but concept must not be listed in it
+    assert "sweep queue" in result.lower()
+    lines = result.split("\n")
+    in_queue = False
+    queue_lines = []
+    for line in lines:
+        if "sweep queue" in line.lower():
+            in_queue = True
+        elif in_queue and line.strip() == "":
+            break
+        elif in_queue:
+            queue_lines.append(line)
+    assert not any("concept" in l for l in queue_lines), \
+        "synthesised page must not appear in sweep queue"
 
 def test_upsert_cluster_reopens_completed_cluster(vault):
     from lacuna_wiki.mcp.audit import mark_swept
@@ -251,14 +288,20 @@ def test_upsert_cluster_reopens_completed_cluster(vault):
                    "# page-a\n\n## S\n\n" + ("Word " * 120) + "\n")
     write_and_sync(vault_root, conn, "page-b.md",
                    "# page-b\n\n## S\n\n" + ("Word " * 120) + "\n")
-    # Create and complete a cluster
+    # Create and complete a cluster; note the cluster id for assertions
     mark_swept(conn, "page-a", cluster={
         "members": ["page-a", "page-b"],
         "label": "Test",
         "rationale": "Test cluster",
     })
-    conn.execute("UPDATE synthesis_clusters SET status='completed', synthesis_page_slug='synthesis-test' WHERE id=1")
-    # Now sweep a new page that includes the synthesis page as member
+    cid = conn.execute(
+        "SELECT id FROM synthesis_clusters WHERE concept_label='Test'"
+    ).fetchone()[0]
+    conn.execute(
+        "UPDATE synthesis_clusters SET status='completed', synthesis_page_slug='synthesis-test'"
+        " WHERE id=?", [cid]
+    )
+    # Sweep a new page that includes the synthesis page slug as a proposed member
     write_and_sync(vault_root, conn, "page-c.md",
                    "# page-c\n\n## S\n\n" + ("Word " * 120) + "\n")
     mark_swept(conn, "page-c", cluster={
@@ -267,11 +310,12 @@ def test_upsert_cluster_reopens_completed_cluster(vault):
         "rationale": "New member joins existing synthesis",
     })
     row = conn.execute(
-        "SELECT status FROM synthesis_clusters WHERE id=1"
+        "SELECT status, concept_label FROM synthesis_clusters WHERE id=?", [cid]
     ).fetchone()
     assert row[0] == "pending", "completed cluster must be reopened when synthesis page is a proposed member"
+    assert row[1] == "Test extended", "label should be updated to the incoming value"
     members = {r[0] for r in conn.execute(
-        "SELECT slug FROM synthesis_cluster_members WHERE cluster_id=1"
+        "SELECT slug FROM synthesis_cluster_members WHERE cluster_id=?", [cid]
     ).fetchall()}
     assert "page-c" in members
 ```
@@ -285,19 +329,16 @@ Expected: FAIL.
 
 - [ ] **Update `_sweep_queue` in `audit.py`**
 
-Add `AND (p.synthesised_into IS NULL)` to the WHERE clause in both the inner and outer queries of `_sweep_queue`.
+Add `AND p.synthesised_into IS NULL` to the WHERE clause of the inner subquery in `_sweep_queue`.
 
 - [ ] **Update `_synthesis_candidates` to exclude synthesised pages**
 
-In the pass-1 query, add to both JOIN conditions:
-```sql
-JOIN pages p1 ON pe1.slug = p1.slug AND p1.synthesised_into IS NULL
-JOIN pages p2 ON pe2.slug = p2.slug AND p2.synthesised_into IS NULL
-```
+In the pass-1 query, add `AND p1.synthesised_into IS NULL` and `AND p2.synthesised_into IS NULL` to the respective JOIN conditions on pages.
 
 - [ ] **Update `_upsert_cluster` to reopen completed clusters**
 
 After the existing union-find check for pending clusters, add:
+
 ```python
 # Check if any proposed member is the synthesis_page_slug of a completed cluster
 for member in members:
@@ -308,8 +349,9 @@ for member in members:
     if row is not None:
         cluster_id = row[0]
         conn.execute(
-            "UPDATE synthesis_clusters SET status='pending' WHERE id=?",
-            [cluster_id],
+            "UPDATE synthesis_clusters SET status='pending', concept_label=?, agent_rationale=?"
+            " WHERE id=?",
+            [label, rationale, cluster_id],
         )
         for m in members:
             conn.execute(
@@ -343,6 +385,12 @@ git commit -m "feat: filter synthesised pages from sweep; reopen completed clust
 - Create: `tests/test_synthesise.py`
 
 Three functions exposed through `wiki()`: `cluster_queue`, `cluster_detail`, `commit_synthesis`.
+
+`cluster_queue` shows a diversity note for all three cases: 0 sources (unknown), 1 source (warning), N sources (count).
+
+`commit_synthesis` docstring must note: member pages receive their `%% synthesised-into %%` notice via the agent (Steps 1d), not here. The daemon sets `synthesised_into` asynchronously on next sync. There is a window between `commit_synthesis` and daemon sync where the cluster is completed but member pages still appear in the sweep queue — the skill's step order (1d before 1e) mitigates this.
+
+Variable names: the raw value from `SUM(token_count)` is `token_count`; multiply by 0.75 to estimate words and label it `approx_words`.
 
 ### Steps
 
@@ -387,8 +435,7 @@ def write_and_sync(vault_root, conn, name, content):
 
 def make_cluster(conn, members, label="Test cluster"):
     from lacuna_wiki.mcp.audit import mark_swept
-    write_slug = members[0]
-    mark_swept(conn, write_slug, cluster={
+    mark_swept(conn, members[0], cluster={
         "members": members,
         "label": label,
         "rationale": "Test rationale.",
@@ -416,6 +463,15 @@ def test_cluster_queue_empty(vault):
     assert "0" in result or "no pending" in result.lower()
 
 
+def test_cluster_queue_shows_diversity_note_zero(vault):
+    from lacuna_wiki.mcp.synthesise import cluster_queue
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "a.md", "# a\n\n## S\n\nContent.\n")
+    make_cluster(conn, ["a"])
+    result = cluster_queue(conn)
+    assert "unknown" in result.lower() or "source" in result.lower()
+
+
 def test_cluster_detail_returns_members(vault):
     from lacuna_wiki.mcp.synthesise import cluster_detail
     vault_root, conn = vault
@@ -440,6 +496,7 @@ def test_cluster_detail_shows_source_diversity(vault):
     cid = make_cluster(conn, ["a", "b"])
     result = cluster_detail(conn, cid)
     assert "source" in result.lower()
+    assert "single-source" in result.lower() or "1" in result
 
 
 def test_cluster_detail_existing_synthesis_page(vault):
@@ -449,8 +506,7 @@ def test_cluster_detail_existing_synthesis_page(vault):
     write_and_sync(vault_root, conn, "b.md", "# b\n\n## S\n\nContent.\n")
     cid = make_cluster(conn, ["a", "b"])
     conn.execute(
-        "UPDATE synthesis_clusters SET synthesis_page_slug='synth-ab' WHERE id=?",
-        [cid],
+        "UPDATE synthesis_clusters SET synthesis_page_slug='synth-ab' WHERE id=?", [cid]
     )
     result = cluster_detail(conn, cid)
     assert "synth-ab" in result
@@ -458,13 +514,13 @@ def test_cluster_detail_existing_synthesis_page(vault):
 
 
 def test_commit_synthesis_marks_completed(vault):
-    from lacuna_wiki.mcp.synthesise import cluster_detail, commit_synthesis
+    from lacuna_wiki.mcp.synthesise import commit_synthesis
     vault_root, conn = vault
     write_and_sync(vault_root, conn, "a.md", "# a\n\n## S\n\nContent.\n")
     write_and_sync(vault_root, conn, "b.md", "# b\n\n## S\n\nContent.\n")
     cid = make_cluster(conn, ["a", "b"])
     result = commit_synthesis(conn, cid, "synthesis-ab")
-    assert "swept" in result.lower() or "committed" in result.lower() or "synthesis-ab" in result
+    assert "synthesis-ab" in result
     row = conn.execute(
         "SELECT status, synthesis_page_slug FROM synthesis_clusters WHERE id=?", [cid]
     ).fetchone()
@@ -502,39 +558,48 @@ def _label_to_slug(label: str) -> str:
     return _SLUG_RE.sub('-', label.lower()).strip('-')
 
 
-def cluster_queue(conn: duckdb.DuckDBPyConnection) -> str:
-    rows = conn.execute(
-        "SELECT id, concept_label, status FROM synthesis_clusters WHERE status='pending' ORDER BY id"
-    ).fetchall()
-    if not rows:
-        return "Synthesis queue: 0 pending clusters."
-
-    lines = [f"Synthesis queue: {len(rows)} pending cluster(s).", ""]
-    for cid, label, status in rows:
-        members = conn.execute(
-            "SELECT slug FROM synthesis_cluster_members WHERE cluster_id=?", [cid]
-        ).fetchall()
-        member_count = len(members)
-        # source diversity
-        source_count = _source_diversity(conn, [m[0] for m in members])
-        diversity_note = f"  ⚠ single-source cluster" if source_count == 1 else f"  {source_count} distinct sources"
-        lines.append(f"  cluster {cid}: \"{label}\" — {member_count} members{diversity_note}")
-    return "\n".join(lines)
-
-
 def _source_diversity(conn: duckdb.DuckDBPyConnection, slugs: list[str]) -> int:
-    """Count distinct sources cited across member pages (via wikilinks to source slugs)."""
+    """Count distinct sources cited across member pages via links to registered source slugs."""
     if not slugs:
         return 0
     placeholders = ','.join('?' * len(slugs))
-    rows = conn.execute(f"""
+    row = conn.execute(f"""
         SELECT COUNT(DISTINCT l.target_slug)
         FROM links l
         JOIN pages p ON l.source_page_id = p.id
         JOIN sources s ON l.target_slug = s.slug
         WHERE p.slug IN ({placeholders})
     """, slugs).fetchone()
-    return rows[0] if rows else 0
+    return row[0] if row else 0
+
+
+def _diversity_note(source_count: int) -> str:
+    if source_count == 0:
+        return "source diversity: unknown (no source links detected)"
+    if source_count == 1:
+        return "source diversity: 1 distinct source  ⚠ single-source cluster"
+    return f"source diversity: {source_count} distinct sources"
+
+
+def cluster_queue(conn: duckdb.DuckDBPyConnection) -> str:
+    rows = conn.execute(
+        "SELECT id, concept_label FROM synthesis_clusters WHERE status='pending' ORDER BY id"
+    ).fetchall()
+    if not rows:
+        return "Synthesis queue: 0 pending clusters."
+
+    lines = [f"Synthesis queue: {len(rows)} pending cluster(s).", ""]
+    for cid, label in rows:
+        members = conn.execute(
+            "SELECT slug FROM synthesis_cluster_members WHERE cluster_id=?", [cid]
+        ).fetchall()
+        member_slugs = [m[0] for m in members]
+        source_count = _source_diversity(conn, member_slugs)
+        lines.append(
+            f"  cluster {cid}: \"{label}\" — {len(member_slugs)} members"
+            f" — {_diversity_note(source_count)}"
+        )
+    return "\n".join(lines)
 
 
 def cluster_detail(conn: duckdb.DuckDBPyConnection, cluster_id: int) -> str:
@@ -568,27 +633,22 @@ def cluster_detail(conn: duckdb.DuckDBPyConnection, cluster_id: int) -> str:
         if page:
             title, synth = page
             synth_note = f"  [synthesised into [[{synth}]]]" if synth else ""
-            word_count = conn.execute(
+            token_count = conn.execute(
                 "SELECT COALESCE(SUM(token_count), 0) FROM sections WHERE page_id="
                 "(SELECT id FROM pages WHERE slug=?)", [slug]
             ).fetchone()[0]
-            lines.append(f"  [[{slug}]] — \"{title or slug}\" — ~{int(word_count * 0.75)} words{synth_note}")
+            approx_words = int(token_count * 0.75)
+            lines.append(
+                f"  [[{slug}]] — \"{title or slug}\" — ~{approx_words} words{synth_note}"
+            )
         else:
             lines.append(f"  [[{slug}]] — (ghost page)")
 
     source_count = _source_diversity(conn, member_slugs)
     lines.append("")
-    if source_count == 0:
-        lines.append("source diversity: unknown (no source links detected)")
-    elif source_count == 1:
-        lines.append("source diversity: 1 distinct source")
-        lines.append("⚠ single-source cluster — synthesis will consolidate one paper's content")
-    else:
-        lines.append(f"source diversity: {source_count} distinct sources")
-
-    suggested = _label_to_slug(label)
+    lines.append(_diversity_note(source_count))
     lines.append("")
-    lines.append(f"suggested slug: {suggested}")
+    lines.append(f"suggested slug: {_label_to_slug(label)}")
 
     if existing_slug:
         lines.append(f"existing synthesis page: [[{existing_slug}]] (revision run)")
@@ -603,6 +663,14 @@ def commit_synthesis(
     cluster_id: int,
     slug: str,
 ) -> str:
+    """Mark cluster completed and record synthesis page slug.
+
+    Note: member pages receive their %% synthesised-into %% notice via the agent
+    (skill Step 1d), not here. The daemon sets synthesised_into asynchronously on
+    next sync. There is a brief window where the cluster is completed but member
+    pages still appear in the sweep queue — the skill's step order (notice before
+    commit) mitigates this.
+    """
     row = conn.execute(
         "SELECT id FROM synthesis_clusters WHERE id=?", [cluster_id]
     ).fetchone()
@@ -638,6 +706,8 @@ git commit -m "feat: mcp/synthesise.py — cluster_queue, cluster_detail, commit
 - Modify: `src/lacuna_wiki/mcp/server.py`
 - Modify: `tests/test_mcp_integration.py`
 
+`synthesise` and `link_audit` are mutually exclusive. If both are provided, return an error.
+
 ### Steps
 
 - [ ] **Write failing tests**
@@ -659,7 +729,10 @@ def test_synthesise_int_returns_detail(vault):
                    "# page-a\n\n## S\n\n" + ("Word " * 120) + "\n")
     dispatch_wiki(conn, fake_embed, link_audit="page-a", mark_swept=True,
                   cluster={"members": ["page-a"], "label": "Test", "rationale": "r"})
-    result = dispatch_wiki(conn, fake_embed, synthesise=1)
+    cid = conn.execute(
+        "SELECT id FROM synthesis_clusters WHERE concept_label='Test'"
+    ).fetchone()[0]
+    result = dispatch_wiki(conn, fake_embed, synthesise=cid)
     assert "page-a" in result
     assert "suggested slug" in result.lower()
 
@@ -670,11 +743,14 @@ def test_synthesise_commit(vault):
                    "# page-a\n\n## S\n\n" + ("Word " * 120) + "\n")
     dispatch_wiki(conn, fake_embed, link_audit="page-a", mark_swept=True,
                   cluster={"members": ["page-a"], "label": "Test", "rationale": "r"})
-    result = dispatch_wiki(conn, fake_embed, synthesise=1,
+    cid = conn.execute(
+        "SELECT id FROM synthesis_clusters WHERE concept_label='Test'"
+    ).fetchone()[0]
+    result = dispatch_wiki(conn, fake_embed, synthesise=cid,
                            commit={"slug": "synthesis-test"})
     assert "synthesis-test" in result
     row = conn.execute(
-        "SELECT status FROM synthesis_clusters WHERE id=1"
+        "SELECT status FROM synthesis_clusters WHERE id=?", [cid]
     ).fetchone()
     assert row[0] == "completed"
 
@@ -684,6 +760,12 @@ def test_synthesise_string_true_normalised(vault):
     _, conn = vault
     result = dispatch_wiki(conn, fake_embed, synthesise="true")
     assert "0" in result or "no pending" in result.lower()
+
+
+def test_synthesise_and_link_audit_mutual_exclusion(vault):
+    _, conn = vault
+    result = dispatch_wiki(conn, fake_embed, synthesise=True, link_audit=True)
+    assert "error" in result.lower() or "mutually exclusive" in result.lower()
 ```
 
 - [ ] **Run tests to verify they fail**
@@ -691,13 +773,14 @@ def test_synthesise_string_true_normalised(vault):
 ```bash
 python -m pytest tests/test_mcp_integration.py::test_synthesise_true_returns_queue -v
 ```
-Expected: FAIL — `dispatch_wiki` does not accept `synthesise` param.
+Expected: FAIL.
 
 - [ ] **Update `dispatch_wiki` and `wiki()` in `server.py`**
 
 Add `synthesise: "bool | int | str | None" = None` and `commit: dict | None = None` to both signatures.
 
-Normalise string `"true"` the same way as `link_audit`:
+Normalise string inputs at the top of `dispatch_wiki`, alongside the existing `link_audit` normalisation:
+
 ```python
 if isinstance(synthesise, str) and synthesise.lower() == "true":
     synthesise = True
@@ -707,7 +790,15 @@ elif isinstance(synthesise, str) and synthesise.isdigit():
     synthesise = int(synthesise)
 ```
 
-Dispatch block (before the `link_audit` block):
+Mutual exclusion guard (before either dispatch block):
+
+```python
+if synthesise is not None and link_audit is not None:
+    return "Error: synthesise and link_audit are mutually exclusive."
+```
+
+Synthesise dispatch block (before the `link_audit` block):
+
 ```python
 if synthesise is not None:
     from lacuna_wiki.mcp.synthesise import (
@@ -723,7 +814,7 @@ if synthesise is not None:
     return cluster_detail(conn, cluster_id)
 ```
 
-Add `synthesise` and `commit` to the `wiki()` tool function's parameter list and the two `dispatch_wiki` call sites in `make_wiki_tool`.
+Add `synthesise` and `commit` to the `wiki()` tool function's parameter list and both `dispatch_wiki` call sites in `make_wiki_tool`.
 
 - [ ] **Run tests to verify they pass**
 
@@ -747,7 +838,7 @@ git commit -m "feat: wire synthesise/commit params into wiki() MCP tool"
 - Modify: `src/lacuna_wiki/cli/status.py`
 - Modify: `tests/test_status.py`
 
-Add one row to the `_sweep_counts` dict: `"synthesised pages"` — count of pages where `synthesised_into IS NOT NULL`.
+Add one row to the status table: `"synthesised pages"` — count of pages where `synthesised_into IS NOT NULL`. Insert after `synthesis queue`.
 
 ### Steps
 
@@ -767,7 +858,7 @@ def test_status_shows_synthesised_pages_row(vault, monkeypatch):
 python -m pytest tests/test_status.py::test_status_shows_synthesised_pages_row -v
 ```
 
-- [ ] **Add `"synthesised pages"` to `_sweep_counts`**
+- [ ] **Add `"synthesised pages"` to `_sweep_counts` in `status.py`**
 
 ```python
 synthesised_pages = conn.execute(
@@ -775,7 +866,7 @@ synthesised_pages = conn.execute(
 ).fetchone()[0]
 ```
 
-Return it in the dict and add the row after `synthesis queue` in the status table.
+Return it in the dict. Add the row after `synthesis queue` in the table.
 
 - [ ] **Run tests to verify they pass**
 
@@ -797,7 +888,7 @@ git commit -m "feat: status shows synthesised pages count"
 **Files:**
 - Create: `src/lacuna_wiki/skills/synthesise.md`
 
-Mirrors `lacuna-sweep` in wording, phrasing, and flow.
+Mirrors `lacuna-sweep` exactly in structure, wording register, and imperative instruction style. Every step is a hard instruction, not a suggestion.
 
 ### Steps
 
@@ -806,7 +897,7 @@ Mirrors `lacuna-sweep` in wording, phrasing, and flow.
 ```markdown
 # Synthesise Skill — lacuna
 
-The editorial counterpart to `lacuna-sweep`. Where sweep adds wikilinks and queues clusters, synthesise reads those clusters and writes unified synthesis pages from their members.
+The synthesis counterpart to `lacuna-sweep`. Where sweep adds wikilinks and queues clusters, synthesise reads those clusters and produces unified synthesis pages — one page per cluster, written from all member pages, surfacing shared ground, disagreements, and weight of evidence in one place.
 
 ---
 
@@ -817,7 +908,7 @@ The editorial counterpart to `lacuna-sweep`. Where sweep adds wikilinks and queu
 | `standard` | default | Pause at Step 0 for queue approval |
 | `auto` | "auto", "just run it" | Skip Step 0 pause — all per-cluster steps run identically |
 
-Auto mode exists to support cron execution.
+Auto mode exists to support cron execution. In auto mode the agent processes the full queue without pausing.
 
 ---
 
@@ -853,7 +944,8 @@ wiki(synthesise=True)
 State the full picture out loud:
 
 > "Synthesis queue:
-> Pending clusters (N): [labels] — awaiting synthesis.
+> Pending clusters (N): [labels and member counts]
+> Single-source clusters: [labels] — will note limitation inline.
 > Any clusters to skip or reprioritise?"
 
 **Standard mode:** pause. Adjust if needed.
@@ -877,13 +969,14 @@ wiki(synthesise=N)
 
 > "Synthesising cluster N: [label]
 > Members (M): [[slug-a]], [[slug-b]], [[slug-c]]
-> Source diversity: N distinct sources. [⚠ single-source — will consolidate one paper] if applicable.
-> Existing synthesis page: [[slug]] / none.
-> Noise members I'm excluding: [[slug-x]] — [reason].
-> Suggested slug: [slug].
-> Reading member pages now — will confirm slug before writing."
+> Source diversity: N distinct sources. [⚠ single-source — will note limitation in synthesis page]
+> Existing synthesis page: [[slug]] / none — [new write / revision run]
+> Noise members I am excluding: [[slug-x]] — [reason]. [[slug-y]] — [reason].
+> Confirmed members: [[slug-a]], [[slug-b]], [[slug-c]]
+> Proposed slug: [slug]
+> Reading member pages now."
 
-Every member surfaced in the cluster detail must be either included in the synthesis or declared noise. Undeclared members are not silently dropped.
+Every member surfaced in the cluster detail must be either confirmed or declared noise. Undeclared members are not silently dropped. A member is noise if it is: under 100 words, a reagent or tool rather than a concept, or clearly off-topic relative to the cluster label.
 
 ### b. Read Members
 
@@ -891,17 +984,19 @@ Every member surfaced in the cluster detail must be either included in the synth
 wiki(pages=["slug-a", "slug-b", "slug-c"])
 ```
 
-For a revision run, also read the existing synthesis page:
+For a revision run, read the existing synthesis page first:
 
 ```
 wiki(page="existing-synthesis-slug")
 ```
 
+After reading, confirm the proposed slug or revise it. The slug must be a good standalone concept name — not prefixed with "synthesis-" unless necessary for disambiguation.
+
 ### c. Write Synthesis Page
 
 Write the synthesis page at `wiki/{cluster-path}/{slug}.md`.
 
-**Frontmatter must include `synthesis: true`:**
+**Frontmatter must open the file. Include `synthesis: true`:**
 
 ```markdown
 ---
@@ -911,32 +1006,55 @@ synthesis: true
 
 # slug
 
-[unified article integrating member content]
+[body]
 ```
 
-Tag rules: include cluster path segments plus 1–3 cross-cutting concept tags. Lowercase, hyphen-separated.
+Tag rules: include each segment of the cluster path (e.g. `sRNA`, `quantification`) plus 1–3 cross-cutting concept tags. Lowercase, hyphen-separated.
 
-**Framing rules:**
-- State the weight of evidence, not a single source's view
-- Surface disagreements explicitly: "X argues A [[source-a.pdf]]; Y demonstrates B at N=270M [[source-b.pdf]] — the larger-scale result is more likely to generalise"
-- Cite all contributing sources inline at the sentence level
-- For single-source clusters, note the limitation: "This synthesis draws from a single source — [[source.pdf]]"
+**Body structure:**
+- Open with a one-paragraph synthesis of what all members agree on
+- Separate section for disagreements or scope differences between sources
+- Cite all contributing sources inline at the sentence level: `claim [[source-a.pdf]] [[source-b.pdf]]`
+- For single-source clusters, add a note at the top: `> *This synthesis draws from a single source — [[source.pdf]].*`
+
+**Framing rules (apply the same claim-type discipline as `lacuna-ingest`):**
+- State weight of evidence across sources, not any single source's view
+- Surface disagreements explicitly: "[[source-a.pdf]] argues X; [[source-b.pdf]] demonstrates Y at 270M parameters — the larger-scale result is more likely to generalise"
+- Hedge unproven claims: "[[source.pdf]] hypothesises that..."
+- Never write encyclopedic voice for experimental results
 
 **Slug casing rule:** slugs are always lowercase. Use pipe syntax for display: `[[slug|Display Text]]`. Never put a wikilink inside a `##` heading.
 
-**Revision run:** edit the existing synthesis page in place. Add new member content; do not erase prior synthesis. Note the revision at the top of the page: `> *Revised [date]: added [[new-slug]].*`
+**Revision run:** edit the synthesis page in place. Add new content from new members; do not erase prior synthesis. Add a revision callout directly below frontmatter:
+
+```markdown
+> *Revised [date]: added [[new-slug-a]], [[new-slug-b]].*
+```
+
+**Excluded members section:** at the bottom of every synthesis page, add:
+
+```markdown
+## Excluded members
+
+| Page | Reason | Date |
+|---|---|---|
+| [[slug-x]] | Reagent, not a concept — d1-egfp is a reporter protein | 2026-04-15 |
+| [[slug-y]] | Under 100 words — stub awaiting sources | 2026-04-15 |
+```
+
+Leave this table empty (headers only) if there are no noise members. Do not omit the section — it is the persistent record of agent judgments for future reviewers.
 
 ### d. Add Synthesised-Into Notice to Members
 
-For each genuine member page (not noise members, not the synthesis page itself), add one line directly below the frontmatter:
+For each **confirmed** member page — not noise members, not the synthesis page itself — add one line directly below the frontmatter:
 
 ```
 %% synthesised-into: [[slug]] %%
 ```
 
-Apply with Edit, one page at a time. The daemon will detect this on next sync and set `synthesised_into` in the DB, removing the page from future sweep backlog and synthesis candidate pools.
+Apply with Edit, one page at a time. Verify each edit was written before moving to the next.
 
-**Do not add the notice to noise members.** Noise members remain in the sweep backlog for future sweeps.
+The daemon detects this notice on next sync and sets `synthesised_into` in the DB. Once set, the page disappears from the sweep backlog and synthesis candidate pool. Do not add the notice to noise members — they remain eligible for future sweeps.
 
 ### e. Commit
 
@@ -944,7 +1062,7 @@ Apply with Edit, one page at a time. The daemon will detect this on next sync an
 wiki(synthesise=N, commit={"slug": "synthesis-slug"})
 ```
 
-> "Synthesised cluster N: [[synthesis-slug]] written. N members noticed. Next: cluster M."
+> "Synthesised cluster N: [[synthesis-slug]] written. N members noticed. Excluded members recorded. Next: cluster M."
 
 Mark task completed.
 
@@ -952,10 +1070,10 @@ Mark task completed.
 
 ## Step 2 — Done
 
-> "Synthesis complete. N clusters synthesised.
-> Pages written: [[slug-a]], [[slug-b]], ...
-> Remaining synthesis queue: N clusters — run `lacuna synthesise` or schedule it.
-> Remaining sweep backlog: N pages."
+> "Synthesis complete. N clusters synthesised, N pages written.
+> Synthesis queue: now holds N pending clusters — run `lacuna synthesise` or schedule it.
+> Remaining sweep backlog: N pages.
+> Research gaps: N stubs, N ghost pages — visible in `lacuna status`."
 
 ---
 
@@ -963,11 +1081,13 @@ Mark task completed.
 
 | Signal | Action |
 |---|---|
-| Member page < 100 words or < 2 sections | Noise — exclude, do not add synthesised-into notice |
-| Member page already synthesised into a different page | Note the conflict; do not add a second notice |
-| Single-source cluster | Proceed but note limitation inline in synthesis page |
-| Revision run (existing synthesis page) | Edit in place; add revision note at top |
-| Cluster has > 10 members | Prioritise the highest-coverage members; note overflow |
+| Member page < 100 words or < 2 sections | Noise — exclude; record in Excluded members table; do not add notice |
+| Member page already synthesised into a different page | Noise — note the conflict in Excluded members; do not add a second notice |
+| Member is a reagent / tool rather than a concept | Noise — exclude; record reason |
+| Single-source cluster | Proceed; add single-source callout at top of synthesis page |
+| Revision run (existing synthesis page) | Read existing page first; edit in place; add revision callout |
+| Cluster has > 10 members | Synthesise the highest-coverage members; record the rest as overflow in Excluded members table |
+| Proposed slug conflicts with an existing page | Append a disambiguating suffix: `nav-channel-pain-pharmacology-synthesis` |
 ```
 
 - [ ] **Run install-skills to verify it is picked up**
@@ -1009,7 +1129,7 @@ cd ~/lacuna-test && lacuna sync
 ```bash
 lacuna status
 ```
-Expected: table includes `synthesised pages` row with count 0 (no synthesis yet).
+Expected: table includes `synthesised pages` row with count 0.
 
 - [ ] **Run `lacuna install-skills --claude-global`**
 
@@ -1018,9 +1138,10 @@ lacuna install-skills --claude-global
 ```
 Expected: 5 skill(s) installed (adversary, ingest, query, sweep, synthesise).
 
-- [ ] **Push and update PR or open new PR**
+- [ ] **Push branch and open PR**
 
 ```bash
 git push -u origin feature/synthesise
-gh pr create ...
+gh pr create --title "feat: lacuna-synthesise — synthesis pages, cluster reopen, synthesised-into notice" \
+  --body "..."
 ```
