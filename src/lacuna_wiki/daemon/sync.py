@@ -9,7 +9,7 @@ from typing import Callable
 import duckdb
 
 from lacuna_wiki.daemon.parser import (
-    CitationEntry, format_frontmatter, parse_citation_claims, parse_frontmatter,
+    CitationEntry, extract_extra_frontmatter, format_frontmatter, parse_citation_claims, parse_frontmatter,
     parse_sections, parse_wikilinks, tags_to_db,
 )
 from lacuna_wiki.tokens import count_tokens
@@ -183,12 +183,13 @@ def _write_frontmatter_back(
 
     created_str = _to_date(row[0])
     updated_str = _to_date(row[1])
-    canonical_fm = format_frontmatter(tags, created_str, updated_str)
+    current_text = full_path.read_text(encoding="utf-8")
+    extras = extract_extra_frontmatter(current_text)
+    canonical_fm = format_frontmatter(tags, created_str, updated_str, extras=extras)
 
     # Reconstruct what the file should look like
     # body may or may not start with a blank line — preserve it
     canonical_text = canonical_fm + body
-    current_text = full_path.read_text(encoding="utf-8")
     if canonical_text != current_text:
         full_path.write_text(canonical_text, encoding="utf-8")
 
