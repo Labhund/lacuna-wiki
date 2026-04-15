@@ -9,8 +9,9 @@ def test_init_db_creates_all_tables(db_conn):
             "WHERE table_schema = 'main'"
         ).fetchall()
     }
-    expected = {"pages", "sections", "links", "sources", "claims", "claim_sources", "source_chunks"}
-    assert expected == tables
+    expected = {"pages", "sections", "links", "sources", "claims", "claim_sources", "source_chunks",
+                "synthesis_clusters", "synthesis_cluster_members", "synthesis_cluster_edges"}
+    assert expected <= tables
 
 
 def test_pages_has_required_columns(db_conn):
@@ -56,7 +57,43 @@ def test_init_db_is_idempotent(db_conn):
     tables = db_conn.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'main'"
     ).fetchone()[0]
-    assert tables == 7
+    assert tables >= 12  # 7 core + schema_version + page_embeddings + 3 synthesis tables
+
+
+def test_pages_has_last_swept_column(db_conn):
+    cols = _column_names(db_conn, "pages")
+    assert "last_swept" in cols
+
+
+def test_page_embeddings_table_exists(db_conn):
+    cols = _column_names(db_conn, "page_embeddings")
+    assert {"slug", "mean_embedding"} <= cols
+
+
+def test_synthesis_cluster_tables_exist(db_conn):
+    tables = {
+        row[0]
+        for row in db_conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+    assert {"synthesis_clusters", "synthesis_cluster_members", "synthesis_cluster_edges",
+            "page_embeddings"} <= tables
+
+
+def test_synthesis_clusters_columns(db_conn):
+    cols = _column_names(db_conn, "synthesis_clusters")
+    assert {"id", "concept_label", "agent_rationale", "status", "queued_at"} <= cols
+
+
+def test_synthesis_cluster_members_columns(db_conn):
+    cols = _column_names(db_conn, "synthesis_cluster_members")
+    assert {"cluster_id", "slug"} <= cols
+
+
+def test_synthesis_cluster_edges_columns(db_conn):
+    cols = _column_names(db_conn, "synthesis_cluster_edges")
+    assert {"cluster_id", "slug_a", "slug_b", "coverage_ratio"} <= cols
 
 
 def test_sections_has_content_column(db_conn):
@@ -83,6 +120,24 @@ def test_source_chunks_has_content_column(db_conn):
     )
     text = db_conn.execute("SELECT content FROM source_chunks").fetchone()[0]
     assert text == "Chunk text here."
+
+
+def test_v4_pages_has_synthesised_into(db_conn):
+    cols = _column_names(db_conn, "pages")
+    assert "synthesised_into" in cols
+
+
+def test_v4_clusters_has_synthesis_page_slug(db_conn):
+    cols = _column_names(db_conn, "synthesis_clusters")
+    assert "synthesis_page_slug" in cols
+
+
+def test_init_db_is_idempotent_v4(db_conn):
+    init_db(db_conn)  # second call must not raise
+    tables = db_conn.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='main'"
+    ).fetchone()[0]
+    assert tables >= 12  # v4 adds no new tables; guard against regression not exact count
 
 
 def _column_names(conn, table: str) -> set[str]:

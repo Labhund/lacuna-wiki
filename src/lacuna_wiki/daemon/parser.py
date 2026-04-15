@@ -61,16 +61,44 @@ def tags_to_db(tags: list[str]) -> str | None:
     return json.dumps(tags) if tags else None
 
 
-def format_frontmatter(tags: list[str], created: str, updated: str) -> str:
+_MANAGED_FM_KEYS = re.compile(r"^\s*(tags|created|updated)\s*:", re.MULTILINE)
+
+
+def extract_extra_frontmatter(text: str) -> list[str]:
+    """Return frontmatter lines that are not tags/created/updated.
+
+    Used by the sync daemon to preserve unknown keys (e.g. 'synthesis: true')
+    when writing canonical frontmatter back into a file.
+    """
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        return []
+    extras = []
+    for line in m.group(1).splitlines():
+        stripped = line.strip()
+        if stripped and not _MANAGED_FM_KEYS.match(line):
+            extras.append(stripped)
+    return extras
+
+
+def format_frontmatter(
+    tags: list[str],
+    created: str,
+    updated: str,
+    extras: list[str] | None = None,
+) -> str:
     """Render canonical YAML frontmatter block.
 
     Always includes created/updated dates. Tags are optional.
+    Unknown keys passed via `extras` are preserved after tags.
     Returns a string ending with the closing '---\\n', ready to be prepended
     to the body (which must supply any blank-line separator).
     """
     lines = ["---"]
     if tags:
         lines.append(f"tags: [{', '.join(tags)}]")
+    for extra in (extras or []):
+        lines.append(extra)
     lines.append(f"created: {created}")
     lines.append(f"updated: {updated}")
     lines.append("---\n")

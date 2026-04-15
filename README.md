@@ -43,6 +43,16 @@ wiki(q="attention mechanisms")          # hybrid semantic + keyword search
 wiki(page="transformer-architecture")   # navigate to a specific page
 wiki(pages=["sdpa", "flash-attn"])      # pull multiple pages in one shot
 wiki(q="...", scope="sources")          # search raw source chunks directly
+
+# sweep — audit and queue
+wiki(link_audit=True)                   # vault audit: research gaps, ghost pages, sweep queue
+wiki(link_audit="slug")                 # single-page audit + top synthesis candidates
+wiki(link_audit="slug", mark_swept=True, cluster={...})  # mark page swept; optionally queue a cluster
+
+# synthesise — read and write synthesis clusters
+wiki(synthesise=True)                   # list pending synthesis clusters
+wiki(synthesise=N)                      # detail for cluster N: members, paths, coverage scores
+wiki(synthesise=N, commit={"slug":"…"}) # mark cluster synthesised; links synthesis page in DB
 ```
 
 That's it. One tool. Your entire research graph.
@@ -81,6 +91,8 @@ Skills included:
 - **ingest** — structured multi-turn knowledge extraction from a source
 - **query** — cited, honest answers from your graph (flags what's missing)
 - **adversary** — re-verifies old claims against their cited sources
+- **sweep** — audits the vault for missing `[[wikilinks]]`, adds them, and queues related pages as synthesis candidates
+- **synthesise** — reads the synthesis queue and writes unified pages from clusters of related content
 
 ---
 
@@ -144,11 +156,40 @@ Windows support is in progress (Linux/macOS fully supported today).
 
 ---
 
-## [[Wikilink]] Cleanup
-The agents are given detailed instructions that enforce proactive addition of [[wikilinks]] but sometimess (especially using smaller local models!) your agent will miss a few. For now periodically ask your agent to: 
-- *"please crawl ~/path/to/vault and add all [[wikilinks]] for proper nouns and key concepts in each page where they are missing"*
+## Keeping the Graph Tidy
 
-> Planned Feature: Dedicated skill and tool to help your agent discover pages that are likely missing [[wikilinks]]
+Ingest adds knowledge — sweep and synthesise maintain it.
+
+**Sweep** audits the vault for missing `[[wikilinks]]` and detects pages that are converging on the same concept. For each page in the backlog, the agent reads it, adds any missing links one at a time, and declares a synthesis cluster if multiple pages are describing the same concept from different angles. Run it periodically in Claude Code:
+
+```
+/lacuna-sweep
+```
+
+**Synthesise** consumes the synthesis queue populated by sweep. It reads each cluster, writes a unified synthesis page from the combined content of the member pages, and marks the members as synthesised. The synthesis page surfaces shared ground, disagreements, and source provenance in one place:
+
+```
+/lacuna-synthesise
+```
+
+Both skills support an `auto` mode for unattended runs — pass `"auto"` or `"just run it"` when invoking.
+
+`lacuna status` shows the full queue state at a glance:
+
+```
+┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━┓
+┃ Table              ┃ Rows ┃
+┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━┩
+│ pages              │  106 │
+│ research gaps      │    8 │  ← stub pages awaiting sources
+│ ghost pages        │    5 │  ← slugs linked but not yet created
+│ sweep backlog      │   23 │  ← pages needing a sweep pass
+│ synthesis queue    │   12 │  ← clusters ready for synthesise
+│ synthesised pages  │    4 │  ← members absorbed into a synthesis page
+│ sections           │  464 │
+│ sources            │   19 │
+└────────────────────┴──────┘
+```
 
 ---
 

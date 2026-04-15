@@ -46,7 +46,7 @@ def test_copy_skills_creates_target_dir(tmp_path):
 
 def test_copy_skills_returns_paths(tmp_path):
     copied = copy_skills(tmp_path)
-    assert len(copied) == 3
+    assert len(copied) == 5
     names = {p.name for p in copied}
     assert names == {"SKILL.md"}
     # Each path should be inside its own lacuna-* dir
@@ -54,3 +54,4 @@ def test_copy_skills_returns_paths(tmp_path):
     assert "lacuna-ingest" in parents
     assert "lacuna-adversary" in parents
     assert "lacuna-query" in parents
+    assert "lacuna-synthesise" in parents

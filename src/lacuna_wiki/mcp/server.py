@@ -23,9 +23,65 @@ def dispatch_wiki(
     page: str | None = None,
     section: str | None = None,
     pages: list[str] | None = None,
+    link_audit: "bool | str | None" = None,
+    mark_swept: bool = False,
+    cluster: dict | None = None,
+    synthesise: "bool | int | str | None" = None,
+    commit: dict | None = None,
     dim: int = 768,
+    vault_root: "Path | None" = None,
 ) -> str:
     """Core dispatch logic, separated from MCP transport for testing."""
+    # Normalise string "true"/"false" sent by agents that don't coerce JSON booleans
+    if isinstance(link_audit, str) and link_audit.lower() == "true":
+        link_audit = True
+    elif isinstance(link_audit, str) and link_audit.lower() == "false":
+        link_audit = None
+
+    if isinstance(synthesise, str) and synthesise.lower() == "true":
+        synthesise = True
+    elif isinstance(synthesise, str) and synthesise.lower() == "false":
+        synthesise = None
+    elif isinstance(synthesise, str) and synthesise.isdigit():
+        synthesise = int(synthesise)
+
+    # Mutual exclusion guard
+    if synthesise is not None and link_audit is not None:
+        return "Error: synthesise and link_audit are mutually exclusive."
+
+    # synthesise mode
+    if synthesise is not None:
+        from lacuna_wiki.mcp.synthesise import (
+            cluster_queue,
+            cluster_detail,
+            commit_synthesis,
+        )
+        if synthesise is True:
+            return cluster_queue(conn)
+        cluster_id = int(synthesise)
+        if commit:
+            return commit_synthesis(conn, cluster_id, commit["slug"], vault_root=vault_root)
+        return cluster_detail(conn, cluster_id)
+
+    # link_audit mode
+    if link_audit is not None:
+        from lacuna_wiki.mcp.audit import (
+            vault_audit,
+            page_audit,
+            mark_swept as do_mark_swept,
+        )
+        if link_audit is True:
+            if mark_swept:
+                return "Error: mark_swept requires link_audit to be a page slug, not True."
+            return vault_audit(conn)
+
+        # link_audit is a slug string
+        slug = str(link_audit)
+        if mark_swept:
+            return do_mark_swept(conn, slug, cluster=cluster, dim=dim)
+        return page_audit(conn, slug, embed_fn, dim=dim)
+
+    # Normal wiki modes
     provided = sum([q is not None, page is not None, pages is not None])
     if provided != 1:
         raise ValueError("exactly one of q, page, or pages must be provided")
@@ -49,6 +105,7 @@ def make_wiki_tool(
     conn_or_path: "duckdb.DuckDBPyConnection | Path",
     embed_fn: EmbedFn,
     dim: int = 768,
+    vault_root: "Path | None" = None,
 ) -> None:
     """Register the wiki tool on mcp_app.
 
@@ -65,6 +122,11 @@ def make_wiki_tool(
         page: str | None = None,
         section: str | None = None,
         pages: list[str] | None = None,
+        link_audit: "bool | str | None" = None,
+        mark_swept: bool = False,
+        cluster: dict | None = None,
+        synthesise: "bool | int | str | None" = None,
+        commit: dict | None = None,
     ) -> str:
         """Search the wiki or navigate to a page.
 
@@ -74,14 +136,32 @@ def make_wiki_tool(
         Navigate: provide `page` (slug). Optional `section` (section name).
 
         Multi-read: provide `pages` (list of slugs).
+
+        Audit: provide `link_audit=True` for full vault audit (research gaps, ghost
+        pages, sweep queue). Provide `link_audit="slug"` for single-page audit
+        (unlinked candidates + synthesis candidates).
+
+        Sweep commit: provide `link_audit="slug"` and `mark_swept=True` to mark the
+        page swept. Optionally include `cluster={"members": [...], "label": "...",
+        "rationale": "..."}` to create or extend a synthesis cluster.
+
+        Synthesise: provide `synthesise=True` for cluster queue. `synthesise=N` for
+        cluster detail. `synthesise=N` with `commit={"slug": "..."}` to mark complete.
         """
         if isinstance(conn_or_path, Path):
-            conn = get_connection(conn_or_path, readonly=True)
+            # Read-write connection — mark_swept/commit writes to DB
+            conn = get_connection(conn_or_path, readonly=False)
             try:
                 return dispatch_wiki(conn, embed_fn, q=q, scope=scope,
-                                     page=page, section=section, pages=pages, dim=dim)
+                                     page=page, section=section, pages=pages,
+                                     link_audit=link_audit, mark_swept=mark_swept,
+                                     cluster=cluster, synthesise=synthesise,
+                                     commit=commit, dim=dim, vault_root=vault_root)
             finally:
                 conn.close()
         else:
             return dispatch_wiki(conn_or_path, embed_fn, q=q, scope=scope,
-                                 page=page, section=section, pages=pages, dim=dim)
+                                 page=page, section=section, pages=pages,
+                                 link_audit=link_audit, mark_swept=mark_swept,
+                                 cluster=cluster, synthesise=synthesise,
+                                 commit=commit, dim=dim, vault_root=vault_root)

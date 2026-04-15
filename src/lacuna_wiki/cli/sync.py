@@ -42,7 +42,7 @@ def sync() -> None:
     embed_fn = partial(embed_texts, url=config["embed_url"], model=config["embed_model"])
 
     conn = get_connection(db_path(vault_root))
-    init_db(conn)
+    init_db(conn, dim=config["embed_dim"])
 
     wiki_dir = vault_root / "wiki"
     pages = sorted(wiki_dir.rglob("*.md"))

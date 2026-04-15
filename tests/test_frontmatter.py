@@ -56,6 +56,40 @@ def test_unknown_frontmatter_keys_ignored():
     assert "author" not in body
 
 
+def test_extract_extra_frontmatter_returns_unknown_keys():
+    from lacuna_wiki.daemon.parser import extract_extra_frontmatter
+    text = "---\ntags: [foo]\nsynthesis: true\ncreated: 2026-01-01\n---\n# title\n"
+    extras = extract_extra_frontmatter(text)
+    assert extras == ["synthesis: true"]
+
+
+def test_extract_extra_frontmatter_empty_when_only_managed_keys():
+    from lacuna_wiki.daemon.parser import extract_extra_frontmatter
+    text = "---\ntags: [foo]\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n# title\n"
+    assert extract_extra_frontmatter(text) == []
+
+
+def test_extract_extra_frontmatter_no_frontmatter():
+    from lacuna_wiki.daemon.parser import extract_extra_frontmatter
+    assert extract_extra_frontmatter("# title\n\ncontent\n") == []
+
+
+def test_daemon_preserves_synthesis_flag(vault):
+    vault_root, conn = vault
+    handler = WikiEventHandler(conn, vault_root, fake_embed)
+
+    page = vault_root / "wiki" / "synth.md"
+    page.write_text(
+        "---\ntags: [neuroscience]\nsynthesis: true\n---\n\n# synth\n\ncontent\n"
+    )
+    fire_modified(handler, page)
+
+    text = page.read_text()
+    assert "synthesis: true" in text
+    assert "created:" in text
+    assert "updated:" in text
+
+
 def test_tags_to_db_returns_json():
     result = tags_to_db(["a", "b"])
     assert json.loads(result) == ["a", "b"]

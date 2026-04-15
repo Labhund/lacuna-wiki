@@ -9,7 +9,7 @@ from typing import Callable
 import duckdb
 
 from lacuna_wiki.daemon.parser import (
-    CitationEntry, format_frontmatter, parse_citation_claims, parse_frontmatter,
+    CitationEntry, extract_extra_frontmatter, format_frontmatter, parse_citation_claims, parse_frontmatter,
     parse_sections, parse_wikilinks, tags_to_db,
 )
 from lacuna_wiki.tokens import count_tokens
@@ -17,8 +17,21 @@ from lacuna_wiki.tokens import count_tokens
 EmbedFn = Callable[[list[str]], list[list[float]]]
 
 
+_OBSIDIAN_COMMENT_RE = re.compile(r'%%.*?%%', re.DOTALL)
+_SYNTHESISED_INTO_RE = re.compile(
+    r'%%\s*synthesised-into:\s*\[\[([^\]]+)\]\]\s*%%', re.IGNORECASE
+)
+
+
+def _strip_obsidian_comments(text: str) -> str:
+    text = _OBSIDIAN_COMMENT_RE.sub('', text)
+    # Collapse multiple consecutive blank lines introduced by comment removal
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text
+
+
 def _body_hash(body: str) -> str:
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:24]
+    return hashlib.sha256(_strip_obsidian_comments(body).encode("utf-8")).hexdigest()[:24]
 
 
 def sync_page(
@@ -56,13 +69,21 @@ def sync_page(
         existing_id, existing_bh, existing_tags = existing
         if existing_bh == bh and existing_tags == tags_json:
             # Nothing changed at all — redundant watchdog event (e.g. after
-            # the daemon wrote dates back into the frontmatter). Skip fully.
+            # the daemon wrote dates back into the frontmatter). Still update
+            # synthesised_into in case the notice was added without body change.
+            m = _SYNTHESISED_INTO_RE.search(body)
+            conn.execute(
+                "UPDATE pages SET synthesised_into=? WHERE slug=?",
+                [m.group(1) if m else None, slug],
+            )
             return
         if existing_bh == bh:
             # Only tags changed — update metadata and write frontmatter back;
             # skip the expensive section/link/claim re-sync.
+            m = _SYNTHESISED_INTO_RE.search(body)
             conn.execute(
-                "UPDATE pages SET tags=? WHERE id=?", [tags_json, existing_id]
+                "UPDATE pages SET tags=?, synthesised_into=? WHERE id=?",
+                [tags_json, m.group(1) if m else None, existing_id],
             )
             _write_frontmatter_back(conn, full_path, slug, tags, body)
             return
@@ -78,6 +99,17 @@ def sync_page(
         conn.rollback()
         raise
 
+    m = _SYNTHESISED_INTO_RE.search(body)
+    synthesised_into = m.group(1) if m else None
+    conn.execute(
+        "UPDATE pages SET synthesised_into=? WHERE slug=?",
+        [synthesised_into, slug],
+    )
+
+    # mean_embedding is updated after the transaction commits — DuckDB's FK
+    # constraint checker sees uncommitted section rows as still referencing pages,
+    # which causes a spurious violation if we UPDATE pages inside the transaction.
+    _update_mean_embedding(conn, page_id)
     _rebuild_fts(conn)
     _write_frontmatter_back(conn, full_path, slug, tags, body)
 
@@ -151,12 +183,13 @@ def _write_frontmatter_back(
 
     created_str = _to_date(row[0])
     updated_str = _to_date(row[1])
-    canonical_fm = format_frontmatter(tags, created_str, updated_str)
+    current_text = full_path.read_text(encoding="utf-8")
+    extras = extract_extra_frontmatter(current_text)
+    canonical_fm = format_frontmatter(tags, created_str, updated_str, extras=extras)
 
     # Reconstruct what the file should look like
     # body may or may not start with a blank line — preserve it
     canonical_text = canonical_fm + body
-    current_text = full_path.read_text(encoding="utf-8")
     if canonical_text != current_text:
         full_path.write_text(canonical_text, encoding="utf-8")
 
@@ -170,6 +203,40 @@ def _path_to_cluster(path: str) -> str:
     """wiki/machine-learning/attention/sdpa.md  →  'machine-learning/attention'"""
     parts = Path(path).parts
     return "/".join(parts[1:-1])  # wiki cluster paths always use forward slashes
+
+
+def _update_mean_embedding(
+    conn: duckdb.DuckDBPyConnection,
+    page_id: int,
+    dim: int = 768,
+) -> None:
+    """Compute element-wise mean of section embeddings and upsert into page_embeddings.
+
+    Stored in a side table rather than as a column on pages because DuckDB 1.5.x has
+    a bug where UPDATE with FLOAT array on a table referenced by FK children raises a
+    spurious constraint error. See schema.py _synthesis_tables for the full note.
+    """
+    slug_row = conn.execute("SELECT slug FROM pages WHERE id=?", [page_id]).fetchone()
+    if slug_row is None:
+        return
+    slug = slug_row[0]
+
+    rows = conn.execute(
+        "SELECT embedding FROM sections WHERE page_id=? AND embedding IS NOT NULL",
+        [page_id],
+    ).fetchall()
+    if not rows:
+        return
+    vecs = [row[0] for row in rows]
+    n = len(vecs)
+    mean_vec = [sum(vecs[i][j] for i in range(n)) / n for j in range(dim)]
+
+    # Upsert: DELETE then INSERT (no ON CONFLICT support in DuckDB for FLOAT arrays)
+    conn.execute("DELETE FROM page_embeddings WHERE slug=?", [slug])
+    conn.execute(
+        "INSERT INTO page_embeddings (slug, mean_embedding) VALUES (?, ?)",
+        [slug, mean_vec],
+    )
 
 
 def _sync_sections(

@@ -64,9 +64,22 @@ def test_navigate_page_returns_section_content(conn):
     assert "Intro text." in result
 
 
+def test_navigate_page_full_read_returns_all_section_content(conn):
+    """Full-page read (no section_name) must include content from every section."""
+    result = navigate_page(conn, "attention-mechanism")
+    assert "Attention computes QKT" in result   # Scaled Dot-Product section
+    assert "Multiple heads in parallel" in result  # Multi-Head section
+
+
 def test_navigate_page_specific_section(conn):
     result = navigate_page(conn, "attention-mechanism", section_name="Scaled Dot-Product")
     assert "Attention computes QKT" in result
+
+
+def test_navigate_page_specific_section_excludes_other_sections(conn):
+    """When a section is specified, other sections' content is NOT included."""
+    result = navigate_page(conn, "attention-mechanism", section_name="Scaled Dot-Product")
+    assert "Multiple heads in parallel" not in result
 
 
 def test_navigate_page_lists_all_sections(conn):
