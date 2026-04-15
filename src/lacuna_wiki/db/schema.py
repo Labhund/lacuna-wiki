@@ -1,4 +1,4 @@
-"""DuckDB schema — all seven tables."""
+"""DuckDB schema — core tables plus synthesis cluster tables."""
 from __future__ import annotations
 
 import duckdb
@@ -10,6 +10,11 @@ _SEQUENCES = [
     "CREATE SEQUENCE IF NOT EXISTS claims_id_seq START 1",
     "CREATE SEQUENCE IF NOT EXISTS source_chunks_id_seq START 1",
 ]
+
+_SYNTHESIS_SEQUENCES = [
+    "CREATE SEQUENCE IF NOT EXISTS synthesis_clusters_id_seq START 1",
+]
+
 
 def _tables(dim: int) -> list[str]:
     return [
@@ -80,11 +85,35 @@ def _tables(dim: int) -> list[str]:
     ]
 
 
+def _synthesis_tables() -> list[str]:
+    return [
+        """CREATE TABLE IF NOT EXISTS synthesis_clusters (
+    id               INTEGER DEFAULT nextval('synthesis_clusters_id_seq') PRIMARY KEY,
+    concept_label    TEXT,
+    agent_rationale  TEXT,
+    status           TEXT DEFAULT 'pending',
+    queued_at        TIMESTAMPTZ DEFAULT now()
+)""",
+        """CREATE TABLE IF NOT EXISTS synthesis_cluster_members (
+    cluster_id  INTEGER REFERENCES synthesis_clusters(id),
+    slug        TEXT NOT NULL,
+    PRIMARY KEY (cluster_id, slug)
+)""",
+        """CREATE TABLE IF NOT EXISTS synthesis_cluster_edges (
+    cluster_id     INTEGER REFERENCES synthesis_clusters(id),
+    slug_a         TEXT NOT NULL,
+    slug_b         TEXT NOT NULL,
+    coverage_ratio FLOAT NOT NULL,
+    PRIMARY KEY (cluster_id, slug_a, slug_b)
+)""",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Schema versioning and migrations
 # ---------------------------------------------------------------------------
 
-_CURRENT_VERSION = 2
+_CURRENT_VERSION = 3
 
 
 def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -125,6 +154,20 @@ def _migrate_v2_claim_sources_no_fk(
 )""")
 
 
+def _migrate_v3_sweep(conn: duckdb.DuckDBPyConnection, dim: int) -> None:
+    """Add mean_embedding + last_swept to pages; create synthesis cluster tables."""
+    conn.execute(
+        f"ALTER TABLE pages ADD COLUMN IF NOT EXISTS mean_embedding FLOAT[{dim}]"
+    )
+    conn.execute(
+        "ALTER TABLE pages ADD COLUMN IF NOT EXISTS last_swept TIMESTAMPTZ"
+    )
+    for stmt in _SYNTHESIS_SEQUENCES:
+        conn.execute(stmt)
+    for stmt in _synthesis_tables():
+        conn.execute(stmt)
+
+
 def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
     """Create sequences and tables. Safe to call on an existing DB."""
     for stmt in _SEQUENCES:
@@ -135,4 +178,6 @@ def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
     version = _get_schema_version(conn)
     if version < 2:
         _migrate_v2_claim_sources_no_fk(conn, dim)
-        _set_schema_version(conn, 2)
+    if version < 3:
+        _migrate_v3_sweep(conn, dim)
+        _set_schema_version(conn, 3)
