@@ -104,7 +104,18 @@ wiki(page="existing-synthesis-slug")
 
 After reading, confirm the proposed slug or revise it. The slug must be a good standalone concept name — not prefixed with "synthesis-" unless necessary for disambiguation.
 
-### c. Plan the Synthesis Page
+### c. Extract Concepts and Create Section Todos
+
+After reading the member pages, extract the distinct concepts that appear across them. Each concept becomes one section of the synthesis page.
+
+State the concept list out loud:
+
+> "Concepts for [[slug]]:
+> 1. [concept name]: [one sentence — what all members say about this]
+> 2. [concept name]: ...
+> N. Disagreements / scope conflicts: [list any, or 'none']"
+
+**Create one todo per concept before entering the write loop.** Do not begin writing until the full todo list exists. Include a todo for the frontmatter/header and a todo for the Excluded members section.
 
 **Derive the cluster path from the member page paths shown in the cluster detail.**
 Each member line includes `path: wiki/{cluster-path}/{slug}.md`. Take the directory
@@ -113,50 +124,9 @@ of any confirmed member — that is your cluster path.
 > Example: if a member path is `wiki/neuroscience/pain-biology/nav17-pain-signaling.md`,
 > the synthesis page goes at `wiki/neuroscience/pain-biology/{slug}.md`.
 
-**Do NOT search the filesystem with Glob, Find, or Search to locate page files.**
-**Do NOT use the Read or Edit tools on wiki files to find paths.**
-Everything goes through `wiki()`.
+### c-ii. Create File with Frontmatter
 
-**Before writing a single word of the page, produce an outline out loud:**
-
-```
-Synthesis plan for [[slug]]:
-
-Section 1 — [heading]: [one sentence — the point this section makes]
-  Claim type: established consensus | experimental result at [scale] | novel hypothesis | counter-consensus
-  Sources: [[source-a.pdf]], [[source-b.pdf]]
-  Wiki links: [[concept-x]], [[concept-y]]
-
-Section 2 — [heading]: ...
-  Claim type: ...
-  Sources: ...
-  Wiki links: ...
-
-[repeat per section]
-
-Disagreements to surface: [list any conflicts between member pages]
-Single-source limitation: yes/no
-```
-
-**Framing gate — check each section before writing it:**
-- Can you name a specific `[[source.pdf]]` for every claim? If not, do not write the claim.
-- Is the claim type `experimental result`? Then the scope (model size, dataset, organism) must be in the sentence.
-- Does the sentence read like a textbook without the citation? That is encyclopedic voice — rewrite.
-
-**Claim-type framing rules (identical to `lacuna-ingest`):**
-
-| Claim type | Required framing |
-|---|---|
-| Established consensus | State as fact, cite inline: `"...claim. [[key.ext]]"` |
-| Experimental result | Attribute + scope: `"[[key.ext]] demonstrates, on [scale/context], that..."` |
-| Novel hypothesis | Hedge verb: `"[[key.ext]] hypothesises / proposes / suggests that..."` |
-| Counter-consensus | Flag inline: `"Contrary to [view], [[key.ext]] argues that..."` |
-
-**Slug casing rule:** slugs are always lowercase. Use pipe syntax for display: `[[slug|Display Text]]`. Never put a wikilink inside a `##` heading.
-
-### c-ii. Write the Synthesis Page — One Section at a Time
-
-Create the file with frontmatter and the title heading only:
+Mark the frontmatter todo `in_progress`. Write the file with frontmatter and title heading only — no body yet:
 
 ```markdown
 ---
@@ -181,13 +151,73 @@ For revision runs, add the revision callout immediately after frontmatter:
 > *Revised [date]: added [[new-slug-a]], [[new-slug-b]].*
 ```
 
-**Then write each section from the plan as a separate Edit.** Before each section Edit, state out loud:
+Mark the frontmatter todo `completed`.
 
-> "Writing section [N] — [heading]: [claim]. Claim type: [type]. Source: [[key.ext]]."
+### c-iii. Per-Concept Write Loop
 
-Do not write a section you did not plan. Do not combine multiple sections into one Edit.
+For each concept todo, in order:
 
-**After all planned sections**, append the Excluded members section as a final Edit:
+**Mark todo `in_progress`. Then work through these steps before writing anything.**
+
+**i. Sources covering this concept**
+
+State which member pages address this concept and what each source says:
+
+> "Concept: [name]
+>
+> [[member-a]] says: [direct paraphrase of what that page says about this concept, with its source citations]
+> [[member-b]] says: [direct paraphrase, with citations]
+> [[member-c]] says: [or 'does not address this concept']
+>
+> Agreement: [what they agree on]
+> Disagreement: [what conflicts, or 'none']"
+
+If no member page addresses the concept, drop it from the plan — do not invent coverage.
+
+**ii. Wiki search**
+
+```
+wiki(q="[concept name — one sentence summary]", scope="all")
+```
+
+Note what the wiki already says about this concept. This surfaces:
+- Existing pages to cross-link rather than repeat
+- Source chunks that might add nuance not in the member pages
+- Near-duplicate content that should be flagged rather than re-synthesised
+
+**iii. Commit**
+
+State out loud before writing:
+
+> "Writing section: [heading]
+> Claim type: established consensus | experimental result at [scale] | novel hypothesis | counter-consensus
+> [[source-a.pdf]] says: [paraphrase]
+> [[source-b.pdf]] says: [paraphrase — or disagreement]
+> Wiki links I will include: [[concept-x]], [[concept-y]]
+> Framing check: [confirm no encyclopedic voice — every claim has a named source]"
+
+**Framing rules — apply before every sentence:**
+
+| Claim type | Required framing |
+|---|---|
+| Established consensus | State as fact, cite inline: `"...claim. [[key.ext]]"` |
+| Experimental result | Attribute + scope: `"[[key.ext]] demonstrates, on [N-parameter model / dataset X / organism Y], that..."` |
+| Novel hypothesis | Hedge verb: `"[[key.ext]] hypothesises / proposes / suggests that..."` |
+| Counter-consensus | Flag inline: `"Contrary to [view], [[key.ext]] argues that..."` |
+
+**Framing gate:** Can you name a `[[source.pdf]]` for every claim in this section? If not, do not write the claim. Does any sentence read like a textbook without its citation? That is encyclopedic voice — rewrite it.
+
+**iv. Write section**
+
+Append the section to the file with Edit. One concept = one Edit = one `##` section.
+
+**Slug casing rule:** slugs are always lowercase. Use pipe syntax for display: `[[slug|Display Text]]`. Never put a wikilink inside a `##` heading.
+
+Mark todo `completed`. Move to next concept.
+
+### c-iv. Append Excluded Members
+
+Mark the excluded-members todo `in_progress`. Append as a final Edit:
 
 ```markdown
 ## Excluded members
@@ -198,7 +228,7 @@ Do not write a section you did not plan. Do not combine multiple sections into o
 | [[slug-y]] | Under 100 words — stub awaiting sources | 2026-04-15 |
 ```
 
-Leave this table empty (headers only) if there are no noise members. Do not omit the section — it is the persistent record of agent judgments for future reviewers.
+Leave the table empty (headers only) if there are no noise members. Do not omit the section. Mark todo `completed`.
 
 ### d. Add Synthesised-Into Notice to Members
 
