@@ -132,14 +132,12 @@ Mark the frontmatter todo `in_progress`. Write the file with frontmatter and tit
 ---
 tags: [tag1, tag2]
 synthesis: true
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
 ---
 
 # slug
 ```
 
-Tag rules: include each segment of the cluster path plus 1–3 cross-cutting concept tags. Lowercase, hyphen-separated. Use today's date for both `created` and `updated`.
+Tag rules: include each segment of the cluster path plus 1–3 cross-cutting concept tags. Lowercase, hyphen-separated. Do not write `created` or `updated` — the daemon writes them back into the frontmatter on next sync.
 
 **Always add the epistemic scope callout immediately after the title heading:**
 
@@ -294,6 +292,6 @@ Mark task completed.
 | Member page already synthesised into a different page | Noise — note the conflict in Excluded members; do not add a second notice |
 | Member is a reagent / tool rather than a concept | Noise — exclude; record reason |
 | Single-source cluster | Proceed; add single-source callout at top of synthesis page |
-| Revision run (existing synthesis page) | Read existing page first; edit in place; add revision callout; update `updated:` date in frontmatter |
+| Revision run (existing synthesis page) | Read existing page first; edit in place; add revision callout — daemon updates `updated:` on next sync |
 | Cluster has > 10 members | Synthesise the highest-coverage members; record the rest as overflow in Excluded members table |
 | Proposed slug conflicts with an existing page | Append a disambiguating suffix: `nav-channel-pain-pharmacology-synthesis` |
