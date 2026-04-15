@@ -263,7 +263,15 @@ Apply with Edit, one page at a time. Verify each edit was written before moving 
 
 The daemon detects this notice on next sync and sets `synthesised_into` in the DB. Once set, the page disappears from the sweep backlog and synthesis candidate pool. Do not add the notice to noise members — they remain eligible for future sweeps.
 
-### e. Commit
+### e. Sync and Commit
+
+Run sync first so the daemon indexes the new synthesis page and writes `created`/`updated` dates back into its frontmatter, and picks up the `synthesised_into` notices on member pages:
+
+```bash
+lacuna sync
+```
+
+Then commit the cluster:
 
 ```
 wiki(synthesise=N, commit={"slug": "synthesis-slug"})
