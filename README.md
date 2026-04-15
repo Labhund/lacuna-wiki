@@ -30,39 +30,7 @@ pip install lacuna-wiki
 lacuna init ~/my-vault
 ```
 
-`init` creates your vault directory structure, sets up the DuckDB index in `~/.lacuna/`, and asks whether to wire the MCP server into Claude Code and/or Hermes automatically. Takes about 10 seconds.
-
-Then wire it into your agent harness manually if needed:
-
-**Claude Desktop / Claude Code (`~/.claude/mcp.json`)**
-```json
-{
-  "mcpServers": {
-    "lacuna": {
-      "command": "lacuna",
-      "args": ["mcp"],
-      "env": { "LACUNA_VAULT": "/path/to/my-vault" }
-    }
-  }
-}
-```
-
-**Hermes (`~/.hermes/config.yaml`)**
-```yaml
-mcp_servers:
-  lacuna:
-    command: lacuna
-    args: [mcp]
-    env:
-      LACUNA_VAULT: /path/to/my-vault
-```
-
-**OpenClaw**
-```bash
-openclaw mcp set lacuna '{"command":"lacuna","args":["mcp"],"env":{"LACUNA_VAULT":"/path/to/my-vault"}}'
-```
-
-> `lacuna init` detects Claude Code, Hermes, and OpenClaw and offers to wire this config automatically.
+`lacuna init` creates your vault directory structure, sets up the DuckDB index in `~/.lacuna/`, and asks whether to wire the MCP server into Claude Code and/or Hermes automatically. Takes about 10 seconds.
 
 ---
 
@@ -173,6 +141,40 @@ dim = 768                         # default — can omit
 Early release. The core loop — add source → agent ingests → agent queries — is solid. The structured skills are where the value is; treat them as opinionated defaults you can adapt.
 
 Windows support is in progress (Linux/macOS fully supported today).
+
+---
+
+## Manual MCP Setup
+
+**Claude Desktop / Claude Code (`~/.claude/mcp.json`)**
+```json
+{
+  "mcpServers": {
+    "lacuna": {
+      "command": "lacuna",
+      "args": ["mcp"],
+      "env": { "LACUNA_VAULT": "/path/to/my-vault" }
+    }
+  }
+}
+```
+
+**Hermes (`~/.hermes/config.yaml`)**
+```yaml
+mcp_servers:
+  lacuna:
+    command: lacuna
+    args: [mcp]
+    env:
+      LACUNA_VAULT: /path/to/my-vault
+```
+
+**OpenClaw**
+```bash
+openclaw mcp set lacuna '{"command":"lacuna","args":["mcp"],"env":{"LACUNA_VAULT":"/path/to/my-vault"}}'
+```
+
+> `lacuna init` detects Claude Code, Hermes, and OpenClaw and offers to wire this config automatically.
 
 ---
 
