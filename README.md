@@ -154,18 +154,35 @@ The agents are given detailed instructions that enforce proactive addition of [[
 
 ## Manual MCP Setup
 
-**Claude Desktop / Claude Code (`~/.claude/mcp.json`)**
+`lacuna init` handles all of this automatically. If you need to wire things by hand:
+
+**Claude Code**
+
+Claude Code requires two files. First, the server config at your vault root:
+
 ```json
+// /path/to/my-vault/.mcp.json
 {
   "mcpServers": {
     "lacuna": {
-      "command": "lacuna",
+      "command": "/full/path/to/lacuna",
       "args": ["mcp"],
       "env": { "LACUNA_VAULT": "/path/to/my-vault" }
     }
   }
 }
 ```
+
+Find the full path with `which lacuna`. Then auto-approve it so Claude Code connects without a prompt:
+
+```json
+// /path/to/my-vault/.claude/settings.local.json
+{
+  "enableAllProjectMcpServers": true
+}
+```
+
+Add `.claude/settings.local.json` to your `.gitignore` — it's a per-user approval file. Optionally also add the entry to `~/.claude/mcp.json` as a global fallback.
 
 **Hermes (`~/.hermes/config.yaml`)**
 ```yaml
@@ -181,8 +198,6 @@ mcp_servers:
 ```bash
 openclaw mcp set lacuna '{"command":"lacuna","args":["mcp"],"env":{"LACUNA_VAULT":"/path/to/my-vault"}}'
 ```
-
-> `lacuna init` detects Claude Code, Hermes, and OpenClaw and offers to wire this config automatically.
 
 ---
 
