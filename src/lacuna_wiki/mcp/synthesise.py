@@ -122,8 +122,12 @@ def commit_synthesis(
     conn: duckdb.DuckDBPyConnection,
     cluster_id: int,
     slug: str,
+    vault_root=None,
 ) -> str:
     """Mark cluster completed and record synthesis page slug.
+
+    Refuses to commit if vault_root is provided and the synthesis page is not
+    indexed in the DB — enforcing that lacuna sync was run after writing the file.
 
     Note: member pages receive their %% synthesised-into %% notice via the agent
     (skill Step 1d), not here. The daemon sets synthesised_into asynchronously on
@@ -136,6 +140,17 @@ def commit_synthesis(
     ).fetchone()
     if row is None:
         return f"Error: cluster {cluster_id} not found."
+
+    # Guard: synthesis page must be indexed (i.e. lacuna sync was run after writing)
+    if vault_root is not None:
+        page_row = conn.execute(
+            "SELECT id FROM pages WHERE slug=?", [slug]
+        ).fetchone()
+        if page_row is None:
+            return (
+                f"Error: synthesis page [[{slug}]] is not in the database. "
+                f"Run `lacuna sync` after writing the file, then call commit again."
+            )
 
     conn.execute(
         "UPDATE synthesis_clusters SET status='completed', synthesis_page_slug=? WHERE id=?",

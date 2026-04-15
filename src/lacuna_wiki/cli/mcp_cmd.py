@@ -52,5 +52,5 @@ def mcp_command() -> None:
     # closes a fresh read-only connection per call — this avoids holding the
     # DuckDB file lock between requests, which would block concurrent writers
     # such as `lacuna add-source`.
-    make_wiki_tool(db, embed_fn, dim=config["embed_dim"])
+    make_wiki_tool(db, embed_fn, dim=config["embed_dim"], vault_root=vault_root)
     mcp_app.run(transport="stdio")

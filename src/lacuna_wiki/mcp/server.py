@@ -29,6 +29,7 @@ def dispatch_wiki(
     synthesise: "bool | int | str | None" = None,
     commit: dict | None = None,
     dim: int = 768,
+    vault_root: "Path | None" = None,
 ) -> str:
     """Core dispatch logic, separated from MCP transport for testing."""
     # Normalise string "true"/"false" sent by agents that don't coerce JSON booleans
@@ -59,7 +60,7 @@ def dispatch_wiki(
             return cluster_queue(conn)
         cluster_id = int(synthesise)
         if commit:
-            return commit_synthesis(conn, cluster_id, commit["slug"])
+            return commit_synthesis(conn, cluster_id, commit["slug"], vault_root=vault_root)
         return cluster_detail(conn, cluster_id)
 
     # link_audit mode
@@ -104,6 +105,7 @@ def make_wiki_tool(
     conn_or_path: "duckdb.DuckDBPyConnection | Path",
     embed_fn: EmbedFn,
     dim: int = 768,
+    vault_root: "Path | None" = None,
 ) -> None:
     """Register the wiki tool on mcp_app.
 
@@ -154,7 +156,7 @@ def make_wiki_tool(
                                      page=page, section=section, pages=pages,
                                      link_audit=link_audit, mark_swept=mark_swept,
                                      cluster=cluster, synthesise=synthesise,
-                                     commit=commit, dim=dim)
+                                     commit=commit, dim=dim, vault_root=vault_root)
             finally:
                 conn.close()
         else:
@@ -162,4 +164,4 @@ def make_wiki_tool(
                                  page=page, section=section, pages=pages,
                                  link_audit=link_audit, mark_swept=mark_swept,
                                  cluster=cluster, synthesise=synthesise,
-                                 commit=commit, dim=dim)
+                                 commit=commit, dim=dim, vault_root=vault_root)
