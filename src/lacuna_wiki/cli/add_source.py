@@ -137,7 +137,7 @@ def add_source(
             time.sleep(0.05)
 
     conn = get_connection(db)
-    init_db(conn)
+    init_db(conn, dim=config["embed_dim"])
 
     def _cleanup() -> None:
         conn.close()
