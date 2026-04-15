@@ -98,3 +98,36 @@ def test_navigate_shows_citation(vault):
     result = dispatch_wiki(conn, fake_embed, page="attn")
     assert "vaswani2017" in result
     assert "Attention Is All You Need" in result
+
+
+def test_link_audit_true_returns_vault_audit(vault):
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "page-a.md",
+                   "# page-a\n\n## S\n\n" + ("Word " * 120) + "\n")
+    result = dispatch_wiki(conn, fake_embed, link_audit=True)
+    assert "sweep queue" in result.lower() or "research gaps" in result.lower()
+
+
+def test_link_audit_slug_returns_page_audit(vault):
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "page-a.md",
+                   "# page-a\n\n## S\n\nSome content.\n")
+    result = dispatch_wiki(conn, fake_embed, link_audit="page-a")
+    assert "page-a" in result
+    assert "unlinked" in result.lower()
+
+
+def test_link_audit_mark_swept(vault):
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "page-a.md",
+                   "# page-a\n\n## S\n\nSome content.\n")
+    result = dispatch_wiki(conn, fake_embed, link_audit="page-a", mark_swept=True)
+    assert "swept" in result.lower()
+    row = conn.execute("SELECT last_swept FROM pages WHERE slug='page-a'").fetchone()
+    assert row[0] is not None
+
+
+def test_link_audit_true_mark_swept_returns_error(vault):
+    vault_root, conn = vault
+    result = dispatch_wiki(conn, fake_embed, link_audit=True, mark_swept=True)
+    assert "error" in result.lower() or "slug" in result.lower()

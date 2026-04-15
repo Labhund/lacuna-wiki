@@ -23,9 +23,31 @@ def dispatch_wiki(
     page: str | None = None,
     section: str | None = None,
     pages: list[str] | None = None,
+    link_audit: "bool | str | None" = None,
+    mark_swept: bool = False,
+    cluster: dict | None = None,
     dim: int = 768,
 ) -> str:
     """Core dispatch logic, separated from MCP transport for testing."""
+    # link_audit mode
+    if link_audit is not None:
+        from lacuna_wiki.mcp.audit import (
+            vault_audit,
+            page_audit,
+            mark_swept as do_mark_swept,
+        )
+        if link_audit is True:
+            if mark_swept:
+                return "Error: mark_swept requires link_audit to be a page slug, not True."
+            return vault_audit(conn)
+
+        # link_audit is a slug string
+        slug = str(link_audit)
+        if mark_swept:
+            return do_mark_swept(conn, slug, cluster=cluster, dim=dim)
+        return page_audit(conn, slug, embed_fn, dim=dim)
+
+    # Normal wiki modes
     provided = sum([q is not None, page is not None, pages is not None])
     if provided != 1:
         raise ValueError("exactly one of q, page, or pages must be provided")
@@ -65,6 +87,9 @@ def make_wiki_tool(
         page: str | None = None,
         section: str | None = None,
         pages: list[str] | None = None,
+        link_audit: "bool | str | None" = None,
+        mark_swept: bool = False,
+        cluster: dict | None = None,
     ) -> str:
         """Search the wiki or navigate to a page.
 
@@ -74,14 +99,27 @@ def make_wiki_tool(
         Navigate: provide `page` (slug). Optional `section` (section name).
 
         Multi-read: provide `pages` (list of slugs).
+
+        Audit: provide `link_audit=True` for full vault audit (research gaps, ghost
+        pages, sweep queue). Provide `link_audit="slug"` for single-page audit
+        (unlinked candidates + synthesis candidates).
+
+        Sweep commit: provide `link_audit="slug"` and `mark_swept=True` to mark the
+        page swept. Optionally include `cluster={"members": [...], "label": "...",
+        "rationale": "..."}` to create or extend a synthesis cluster.
         """
         if isinstance(conn_or_path, Path):
-            conn = get_connection(conn_or_path, readonly=True)
+            # Read-write connection — mark_swept writes to DB
+            conn = get_connection(conn_or_path, readonly=False)
             try:
                 return dispatch_wiki(conn, embed_fn, q=q, scope=scope,
-                                     page=page, section=section, pages=pages, dim=dim)
+                                     page=page, section=section, pages=pages,
+                                     link_audit=link_audit, mark_swept=mark_swept,
+                                     cluster=cluster, dim=dim)
             finally:
                 conn.close()
         else:
             return dispatch_wiki(conn_or_path, embed_fn, q=q, scope=scope,
-                                 page=page, section=section, pages=pages, dim=dim)
+                                 page=page, section=section, pages=pages,
+                                 link_audit=link_audit, mark_swept=mark_swept,
+                                 cluster=cluster, dim=dim)
