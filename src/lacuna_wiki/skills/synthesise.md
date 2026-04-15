@@ -211,8 +211,9 @@ State out loud before writing:
 > Claim type: established consensus | experimental result at [scale] | novel hypothesis | counter-consensus
 > [[source-a.pdf]] says: [paraphrase]
 > [[source-b.pdf]] says: [paraphrase — or disagreement]
-> Wiki links I will include: [[concept-x]], [[concept-y]]
-> Framing check: [confirm no encyclopedic voice — every claim has a named source]"
+> Wiki pages I will link: [[concept-x]], [[concept-y]]
+> Constraint: nothing I do not list here appears as a [[wikilink]] in the section.
+> Framing check: every claim has a named [[source.pdf]] — no encyclopedic voice."
 
 **Framing rules — apply before every sentence:**
 
