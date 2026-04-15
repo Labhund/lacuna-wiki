@@ -33,15 +33,18 @@ def navigate_page(
     if not sections:
         return f"## {slug}\n\n(no sections)\n"
 
-    # Target: specific section or first section (preamble)
+    # Target: specific section requested, or full page (all sections)
     if section_name:
         target = next((s for s in sections if s[2] == section_name), None)
         if target is None:
             target = sections[0]
+        target_id, target_pos, target_name, target_content, target_tokens, target_emb = target
+        full_page_content = None  # single-section mode
     else:
+        # Full-page read: use first section for embedding/similarity; render all
         target = sections[0]
-
-    target_id, target_pos, target_name, target_content, target_tokens, target_emb = target
+        target_id, target_pos, target_name, target_content, target_tokens, target_emb = target
+        full_page_content = "\n\n".join(s[3] or "" for s in sections)
 
     # Links out
     links_out = [
@@ -93,7 +96,7 @@ def navigate_page(
     return _render_navigate(
         slug=slug,
         section_name=target_name,
-        content=target_content or "",
+        content=full_page_content if full_page_content is not None else (target_content or ""),
         sections=[(s[2], s[4]) for s in sections],
         links_out=links_out,
         links_in=links_in,

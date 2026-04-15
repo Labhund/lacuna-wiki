@@ -15,6 +15,15 @@ Auto mode exists to support cron execution. In auto mode the agent processes the
 
 ---
 
+## Forbidden Operations
+
+**Never use Glob, Grep, Find, Search, or `ls` to locate wiki files.**
+**Never use the Read tool on wiki files to discover paths or read content.**
+All paths, content, and structure come from `wiki()`. File paths appear in cluster detail.
+Using filesystem tools instead of `wiki()` pollutes the context window and bypasses the index.
+
+---
+
 ## MCP Tool Reference
 
 All wiki operations go through the `wiki` MCP tool.
@@ -97,6 +106,17 @@ After reading, confirm the proposed slug or revise it. The slug must be a good s
 
 ### c. Write Synthesis Page
 
+**Derive the cluster path from the member page paths shown in the cluster detail.**
+Each member line includes `path: wiki/{cluster-path}/{slug}.md`. Take the directory
+of any confirmed member — that is your cluster path.
+
+> Example: if a member path is `wiki/neuroscience/pain-biology/nav17-pain-signaling.md`,
+> the synthesis page goes at `wiki/neuroscience/pain-biology/{slug}.md`.
+
+**Do NOT search the filesystem with Glob, Find, or Search to locate page files.**
+**Do NOT use the Read or Edit tools on wiki files to find paths.**
+Everything goes through `wiki()`.
+
 Write the synthesis page at `wiki/{cluster-path}/{slug}.md`.
 
 **Frontmatter must open the file. Include `synthesis: true`:**
@@ -154,6 +174,9 @@ For each **confirmed** member page — not noise members, not the synthesis page
 ```
 %% synthesised-into: [[slug]] %%
 ```
+
+**Use the `path` field from the cluster detail to locate each file. Do not Glob, Grep, or Search
+for the file. The path was already returned when you called `wiki(synthesise=N)`.**
 
 Apply with Edit, one page at a time. Verify each edit was written before moving to the next.
 

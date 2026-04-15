@@ -87,10 +87,10 @@ def cluster_detail(conn: duckdb.DuckDBPyConnection, cluster_id: int) -> str:
 
     for slug in member_slugs:
         page = conn.execute(
-            "SELECT title, synthesised_into FROM pages WHERE slug=?", [slug]
+            "SELECT title, synthesised_into, path FROM pages WHERE slug=?", [slug]
         ).fetchone()
         if page:
-            title, synth = page
+            title, synth, path = page
             synth_note = f"  [synthesised into [[{synth}]]]" if synth else ""
             token_count = conn.execute(
                 "SELECT COALESCE(SUM(token_count), 0) FROM sections WHERE page_id="
@@ -98,7 +98,8 @@ def cluster_detail(conn: duckdb.DuckDBPyConnection, cluster_id: int) -> str:
             ).fetchone()[0]
             approx_words = int(token_count * 0.75)
             lines.append(
-                f"  [[{slug}]] — \"{title or slug}\" — ~{approx_words} words{synth_note}"
+                f"  [[{slug}]] — \"{title or slug}\" — ~{approx_words} words"
+                f" — path: {path}{synth_note}"
             )
         else:
             lines.append(f"  [[{slug}]] — (ghost page)")
