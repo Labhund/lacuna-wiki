@@ -108,6 +108,17 @@ def test_link_audit_true_returns_vault_audit(vault):
     assert "sweep queue" in result.lower() or "research gaps" in result.lower()
 
 
+def test_link_audit_string_true_normalised(vault):
+    """Agents sometimes pass link_audit='true' (string) instead of True (bool)."""
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "page-a.md",
+                   "# page-a\n\n## S\n\n" + ("Word " * 120) + "\n")
+    result = dispatch_wiki(conn, fake_embed, link_audit="true")
+    assert "sweep queue" in result.lower() or "research gaps" in result.lower()
+    result2 = dispatch_wiki(conn, fake_embed, link_audit="True")
+    assert "sweep queue" in result2.lower() or "research gaps" in result2.lower()
+
+
 def test_link_audit_slug_returns_page_audit(vault):
     vault_root, conn = vault
     write_and_sync(vault_root, conn, "page-a.md",

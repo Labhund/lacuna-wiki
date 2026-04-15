@@ -29,6 +29,11 @@ def dispatch_wiki(
     dim: int = 768,
 ) -> str:
     """Core dispatch logic, separated from MCP transport for testing."""
+    # Normalise string "true"/"false" sent by agents that don't coerce JSON booleans
+    if isinstance(link_audit, str) and link_audit.lower() == "true":
+        link_audit = True
+    elif isinstance(link_audit, str) and link_audit.lower() == "false":
+        link_audit = None
     # link_audit mode
     if link_audit is not None:
         from lacuna_wiki.mcp.audit import (
