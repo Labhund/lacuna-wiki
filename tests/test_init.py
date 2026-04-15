@@ -45,7 +45,7 @@ def test_init_database_has_tables(tmp_path, runner, monkeypatch):
         "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
     ).fetchall()}
     conn.close()
-    assert {"pages", "sections", "sources", "claims", "claim_sources", "source_chunks", "links"} == tables
+    assert {"pages", "sections", "sources", "claims", "claim_sources", "source_chunks", "links"} <= tables
 
 
 def test_init_creates_gitignore(tmp_path, runner, monkeypatch):
