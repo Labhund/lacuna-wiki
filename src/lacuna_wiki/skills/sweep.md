@@ -108,7 +108,9 @@ For each unlinked candidate, one at a time:
 
 Apply with Edit. Verify the link was written. Do not batch multiple candidates into one edit.
 
-**Slug casing rule:** slugs are always lowercase. Write `[[slug]]`, never `[[Slug]]` or `[[SLUG]]`. If you need display text to differ from the slug — capitalisation, plurals, mid-sentence phrasing — use the pipe syntax: `[[slug|Slug]]`, `[[slug|slugs]]`, `[[nav17-pain-signaling|NaV1.7 pain signaling]]`. Never put a wikilink inside a `##` section heading.
+**Slug casing rule:** when *adding* a new wikilink, the slug (the part the system resolves) must be lowercase. If the word appears capitalised in the text — protein names, proper nouns, acronyms — preserve the display text using the pipe syntax: `[[dicer|Dicer]]`, `[[ago2|AGO2]]`, `[[nav17-pain-signaling|NaV1.7]]`. Do **not** rewrite existing `[[Wikilinks]]` already in the file; only add links where none exist. Never put a wikilink inside a `##` section heading.
+
+**Semantic false-positive check:** before adding a link, confirm the word in context refers to the wiki concept, not a different sense of the same word. Example: "ninja throwing star" should not get `[[star]]` if `star` is an RNA aligner — read the sentence.
 
 **Ghost page rule:** if an unlinked candidate has no existing page (ghost page), still add the `[[wikilink]]`. This reinforces the research gap signal — more pages linking to a ghost increases its priority.
 
