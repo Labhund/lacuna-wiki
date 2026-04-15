@@ -289,3 +289,65 @@ def test_mark_swept_removes_from_sweep_queue(vault):
         elif in_sweep:
             sweep_lines.append(line)
     assert not any("swept-page" in l for l in sweep_lines)
+
+
+def test_sweep_queue_excludes_synthesised_pages(vault):
+    from lacuna_wiki.mcp.audit import vault_audit
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "concept.md",
+                   "# concept\n\n## S\n\n" + ("Word " * 120) + "\n")
+    conn.execute("UPDATE pages SET synthesised_into='synthesis-concept' WHERE slug='concept'")
+    result = vault_audit(conn)
+    # sweep queue must appear in output but concept must not be listed in it
+    assert "sweep queue" in result.lower()
+    lines = result.split("\n")
+    in_queue = False
+    queue_lines = []
+    for line in lines:
+        if "sweep queue" in line.lower():
+            in_queue = True
+        elif in_queue and line.strip() == "":
+            break
+        elif in_queue:
+            queue_lines.append(line)
+    assert not any("concept" in l for l in queue_lines), \
+        "synthesised page must not appear in sweep queue"
+
+
+def test_upsert_cluster_reopens_completed_cluster(vault):
+    from lacuna_wiki.mcp.audit import mark_swept
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "page-a.md",
+                   "# page-a\n\n## S\n\n" + ("Word " * 120) + "\n")
+    write_and_sync(vault_root, conn, "page-b.md",
+                   "# page-b\n\n## S\n\n" + ("Word " * 120) + "\n")
+    # Create and complete a cluster; note the cluster id for assertions
+    mark_swept(conn, "page-a", cluster={
+        "members": ["page-a", "page-b"],
+        "label": "Test",
+        "rationale": "Test cluster",
+    })
+    cid = conn.execute(
+        "SELECT id FROM synthesis_clusters WHERE concept_label='Test'"
+    ).fetchone()[0]
+    conn.execute(
+        "UPDATE synthesis_clusters SET status='completed', synthesis_page_slug='synthesis-test'"
+        " WHERE id=?", [cid]
+    )
+    # Sweep a new page that includes the synthesis page slug as a proposed member
+    write_and_sync(vault_root, conn, "page-c.md",
+                   "# page-c\n\n## S\n\n" + ("Word " * 120) + "\n")
+    mark_swept(conn, "page-c", cluster={
+        "members": ["page-c", "synthesis-test"],
+        "label": "Test extended",
+        "rationale": "New member joins existing synthesis",
+    })
+    row = conn.execute(
+        "SELECT status, concept_label FROM synthesis_clusters WHERE id=?", [cid]
+    ).fetchone()
+    assert row[0] == "pending", "completed cluster must be reopened when synthesis page is a proposed member"
+    assert row[1] == "Test extended", "label should be updated to the incoming value"
+    members = {r[0] for r in conn.execute(
+        "SELECT slug FROM synthesis_cluster_members WHERE cluster_id=?", [cid]
+    ).fetchall()}
+    assert "page-c" in members

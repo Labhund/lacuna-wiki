@@ -127,7 +127,8 @@ def _sweep_queue(conn: duckdb.DuckDBPyConnection) -> list[tuple]:
                    (SELECT COUNT(*) FROM links l WHERE l.source_page_id = p.id) AS link_count,
                    COALESCE((SELECT SUM(s.token_count) FROM sections s WHERE s.page_id = p.id), 0) AS token_sum
             FROM pages p
-            WHERE p.last_swept IS NULL OR p.last_modified > p.last_swept
+            WHERE (p.last_swept IS NULL OR p.last_modified > p.last_swept)
+              AND p.synthesised_into IS NULL
         ) t
         ORDER BY
             CASE WHEN token_sum = 0 THEN 0 ELSE link_count::FLOAT / token_sum END ASC,
@@ -281,9 +282,9 @@ def _synthesis_candidates(
         SELECT p2.slug, p2.title,
                array_inner_product(pe1.mean_embedding::FLOAT[{dim}], pe2.mean_embedding::FLOAT[{dim}]) AS sim
         FROM page_embeddings pe1
-        JOIN pages p1 ON pe1.slug = p1.slug
+        JOIN pages p1 ON pe1.slug = p1.slug AND p1.synthesised_into IS NULL
         JOIN page_embeddings pe2 ON pe2.slug != pe1.slug
-        JOIN pages p2 ON pe2.slug = p2.slug
+        JOIN pages p2 ON pe2.slug = p2.slug AND p2.synthesised_into IS NULL
         WHERE p1.slug = ?
         ORDER BY sim DESC
         LIMIT 20
@@ -385,6 +386,27 @@ def _upsert_cluster(
         if row:
             existing_cluster_id = row[0]
             break
+
+    # Check if any proposed member is the synthesis_page_slug of a completed cluster
+    for member in members:
+        row = conn.execute(
+            "SELECT id FROM synthesis_clusters WHERE synthesis_page_slug=? AND status='completed'",
+            [member],
+        ).fetchone()
+        if row is not None:
+            cluster_id = row[0]
+            conn.execute(
+                "UPDATE synthesis_clusters SET status='pending', concept_label=?, agent_rationale=?"
+                " WHERE id=?",
+                [label, rationale, cluster_id],
+            )
+            for m in members:
+                conn.execute(
+                    "INSERT INTO synthesis_cluster_members (cluster_id, slug) VALUES (?,?)"
+                    " ON CONFLICT DO NOTHING",
+                    [cluster_id, m],
+                )
+            return
 
     if existing_cluster_id is None:
         conn.execute(
