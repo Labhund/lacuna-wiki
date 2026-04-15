@@ -186,3 +186,68 @@ def test_sync_page_sets_mean_embedding(vault):
     assert len(emb) == 768
     # Two content sections get embeddings; mean of first elements should be between 1 and 3
     assert 1.0 <= emb[0] <= 3.0
+
+
+def test_body_hash_ignores_obsidian_comments(vault):
+    """Adding a %% notice %% must not change the body hash."""
+    from lacuna_wiki.daemon.sync import sync_page
+    from lacuna_wiki.vault import db_path
+    import duckdb
+    from pathlib import Path
+
+    vault_root, _ = vault
+    conn = duckdb.connect(str(db_path(vault_root)))
+    init_db(conn)
+
+    page = vault_root / "wiki" / "concept.md"
+    page.write_text("# concept\n\n## S1\n\n" + ("Word " * 60) + "\n")
+    sync_page(conn, vault_root, Path("wiki/concept.md"), fake_embed)
+    h1 = conn.execute("SELECT body_hash FROM pages WHERE slug='concept'").fetchone()[0]
+
+    page.write_text(
+        "# concept\n\n%% synthesised-into: [[synthesis-concept]] %%\n\n## S1\n\n"
+        + ("Word " * 60) + "\n"
+    )
+    sync_page(conn, vault_root, Path("wiki/concept.md"), fake_embed)
+    h2 = conn.execute("SELECT body_hash FROM pages WHERE slug='concept'").fetchone()[0]
+
+    assert h1 == h2, "body hash must not change when only a %% notice %% is added"
+
+
+def test_sync_detects_synthesised_into(vault):
+    from lacuna_wiki.daemon.sync import sync_page
+    from lacuna_wiki.vault import db_path
+    import duckdb
+    from pathlib import Path
+
+    vault_root, _ = vault
+    conn = duckdb.connect(str(db_path(vault_root)))
+    init_db(conn)
+
+    page = vault_root / "wiki" / "concept.md"
+    page.write_text(
+        "# concept\n\n%% synthesised-into: [[synthesis-concept]] %%\n\n## S1\n\nContent.\n"
+    )
+    sync_page(conn, vault_root, Path("wiki/concept.md"), fake_embed)
+    row = conn.execute("SELECT synthesised_into FROM pages WHERE slug='concept'").fetchone()
+    assert row[0] == "synthesis-concept"
+
+
+def test_sync_detects_synthesised_into_case_insensitive(vault):
+    """Notice detection must be case-insensitive."""
+    from lacuna_wiki.daemon.sync import sync_page
+    from lacuna_wiki.vault import db_path
+    import duckdb
+    from pathlib import Path
+
+    vault_root, _ = vault
+    conn = duckdb.connect(str(db_path(vault_root)))
+    init_db(conn)
+
+    page = vault_root / "wiki" / "concept2.md"
+    page.write_text(
+        "# concept2\n\n%% Synthesised-Into: [[synthesis-concept]] %%\n\n## S1\n\nContent.\n"
+    )
+    sync_page(conn, vault_root, Path("wiki/concept2.md"), fake_embed)
+    row = conn.execute("SELECT synthesised_into FROM pages WHERE slug='concept2'").fetchone()
+    assert row[0] == "synthesis-concept"

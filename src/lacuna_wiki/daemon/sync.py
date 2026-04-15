@@ -17,8 +17,21 @@ from lacuna_wiki.tokens import count_tokens
 EmbedFn = Callable[[list[str]], list[list[float]]]
 
 
+_OBSIDIAN_COMMENT_RE = re.compile(r'%%.*?%%', re.DOTALL)
+_SYNTHESISED_INTO_RE = re.compile(
+    r'%%\s*synthesised-into:\s*\[\[([^\]]+)\]\]\s*%%', re.IGNORECASE
+)
+
+
+def _strip_obsidian_comments(text: str) -> str:
+    text = _OBSIDIAN_COMMENT_RE.sub('', text)
+    # Collapse multiple consecutive blank lines introduced by comment removal
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text
+
+
 def _body_hash(body: str) -> str:
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:24]
+    return hashlib.sha256(_strip_obsidian_comments(body).encode("utf-8")).hexdigest()[:24]
 
 
 def sync_page(
@@ -56,13 +69,21 @@ def sync_page(
         existing_id, existing_bh, existing_tags = existing
         if existing_bh == bh and existing_tags == tags_json:
             # Nothing changed at all — redundant watchdog event (e.g. after
-            # the daemon wrote dates back into the frontmatter). Skip fully.
+            # the daemon wrote dates back into the frontmatter). Still update
+            # synthesised_into in case the notice was added without body change.
+            m = _SYNTHESISED_INTO_RE.search(body)
+            conn.execute(
+                "UPDATE pages SET synthesised_into=? WHERE slug=?",
+                [m.group(1) if m else None, slug],
+            )
             return
         if existing_bh == bh:
             # Only tags changed — update metadata and write frontmatter back;
             # skip the expensive section/link/claim re-sync.
+            m = _SYNTHESISED_INTO_RE.search(body)
             conn.execute(
-                "UPDATE pages SET tags=? WHERE id=?", [tags_json, existing_id]
+                "UPDATE pages SET tags=?, synthesised_into=? WHERE id=?",
+                [tags_json, m.group(1) if m else None, existing_id],
             )
             _write_frontmatter_back(conn, full_path, slug, tags, body)
             return
@@ -77,6 +98,13 @@ def sync_page(
     except Exception:
         conn.rollback()
         raise
+
+    m = _SYNTHESISED_INTO_RE.search(body)
+    synthesised_into = m.group(1) if m else None
+    conn.execute(
+        "UPDATE pages SET synthesised_into=? WHERE slug=?",
+        [synthesised_into, slug],
+    )
 
     # mean_embedding is updated after the transaction commits — DuckDB's FK
     # constraint checker sees uncommitted section rows as still referencing pages,
