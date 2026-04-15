@@ -16,12 +16,12 @@ The user declares the mode at the start of the session:
 | Mode | Declared by | Pause pattern |
 |---|---|---|
 | `standard` (default) | no declaration, or "standard" | One pause at Step 2 for concept list approval |
-| `auto` | "auto", "just run it", "no pauses" | No pauses — full autonomous loop |
+| `auto` | "auto", "just run it", "no pauses" | Skip Step 2 pause only — all other steps identical to standard |
 | `aligned` | "aligned", "walk me through this" | Pause per concept — present before writing |
 
 If no mode is declared, use standard.
 
-**Auto mode:** Skip the Step 2 pause entirely. Run the full todo loop without surfacing routing decisions — including the non-obvious decisions in Step 3d that standard mode would surface. The agent resolves these silently. Use for: batch ingest of trusted material, re-ingesting already-known sources, or when the user has explicitly opted out of the integration dialogue.
+**Auto mode:** Skip the Step 2 pause only. Every other step — including the Step 3a verbal commit, the claim type declaration, the link pre-declaration, the non-obvious routing surfacing in Step 3d, supersession confirmations, and the editorial pass — runs exactly as in standard mode. Do not suppress, abbreviate, or silently resolve anything that standard mode says out loud. The only difference from standard mode is that you do not wait for user approval of the concept list before proceeding.
 
 **Aligned mode:** See the Aligned Mode section at the end of this skill.
 
