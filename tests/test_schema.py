@@ -57,12 +57,17 @@ def test_init_db_is_idempotent(db_conn):
     tables = db_conn.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'main'"
     ).fetchone()[0]
-    assert tables == 11  # 7 core + schema_version + 3 synthesis tables
+    assert tables == 12  # 7 core + schema_version + page_embeddings + 3 synthesis tables
 
 
-def test_pages_has_sweep_columns(db_conn):
+def test_pages_has_last_swept_column(db_conn):
     cols = _column_names(db_conn, "pages")
-    assert {"mean_embedding", "last_swept"} <= cols
+    assert "last_swept" in cols
+
+
+def test_page_embeddings_table_exists(db_conn):
+    cols = _column_names(db_conn, "page_embeddings")
+    assert {"slug", "mean_embedding"} <= cols
 
 
 def test_synthesis_cluster_tables_exist(db_conn):
@@ -72,7 +77,8 @@ def test_synthesis_cluster_tables_exist(db_conn):
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
         ).fetchall()
     }
-    assert {"synthesis_clusters", "synthesis_cluster_members", "synthesis_cluster_edges"} <= tables
+    assert {"synthesis_clusters", "synthesis_cluster_members", "synthesis_cluster_edges",
+            "page_embeddings"} <= tables
 
 
 def test_synthesis_clusters_columns(db_conn):

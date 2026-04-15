@@ -78,6 +78,10 @@ def sync_page(
         conn.rollback()
         raise
 
+    # mean_embedding is updated after the transaction commits — DuckDB's FK
+    # constraint checker sees uncommitted section rows as still referencing pages,
+    # which causes a spurious violation if we UPDATE pages inside the transaction.
+    _update_mean_embedding(conn, page_id)
     _rebuild_fts(conn)
     _write_frontmatter_back(conn, full_path, slug, tags, body)
 
@@ -170,6 +174,40 @@ def _path_to_cluster(path: str) -> str:
     """wiki/machine-learning/attention/sdpa.md  →  'machine-learning/attention'"""
     parts = Path(path).parts
     return "/".join(parts[1:-1])  # wiki cluster paths always use forward slashes
+
+
+def _update_mean_embedding(
+    conn: duckdb.DuckDBPyConnection,
+    page_id: int,
+    dim: int = 768,
+) -> None:
+    """Compute element-wise mean of section embeddings and upsert into page_embeddings.
+
+    Stored in a side table rather than as a column on pages because DuckDB 1.5.x has
+    a bug where UPDATE with FLOAT array on a table referenced by FK children raises a
+    spurious constraint error. See schema.py _synthesis_tables for the full note.
+    """
+    slug_row = conn.execute("SELECT slug FROM pages WHERE id=?", [page_id]).fetchone()
+    if slug_row is None:
+        return
+    slug = slug_row[0]
+
+    rows = conn.execute(
+        "SELECT embedding FROM sections WHERE page_id=? AND embedding IS NOT NULL",
+        [page_id],
+    ).fetchall()
+    if not rows:
+        return
+    vecs = [row[0] for row in rows]
+    n = len(vecs)
+    mean_vec = [sum(vecs[i][j] for i in range(n)) / n for j in range(dim)]
+
+    # Upsert: DELETE then INSERT (no ON CONFLICT support in DuckDB for FLOAT arrays)
+    conn.execute("DELETE FROM page_embeddings WHERE slug=?", [slug])
+    conn.execute(
+        "INSERT INTO page_embeddings (slug, mean_embedding) VALUES (?, ?)",
+        [slug, mean_vec],
+    )
 
 
 def _sync_sections(

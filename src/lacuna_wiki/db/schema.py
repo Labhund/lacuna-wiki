@@ -85,8 +85,16 @@ def _tables(dim: int) -> list[str]:
     ]
 
 
-def _synthesis_tables() -> list[str]:
+def _synthesis_tables(dim: int = 768) -> list[str]:
     return [
+        # page_embeddings is a side table (not part of the core page schema) to store
+        # the mean section embedding per page. Stored separately because DuckDB 1.5.x
+        # has a bug where UPDATE with a FLOAT array column on a table referenced by FK
+        # children (sections.page_id → pages.id) raises a spurious constraint error.
+        f"""CREATE TABLE IF NOT EXISTS page_embeddings (
+    slug           TEXT PRIMARY KEY,
+    mean_embedding FLOAT[{dim}] NOT NULL
+)""",
         """CREATE TABLE IF NOT EXISTS synthesis_clusters (
     id               INTEGER DEFAULT nextval('synthesis_clusters_id_seq') PRIMARY KEY,
     concept_label    TEXT,
@@ -155,16 +163,19 @@ def _migrate_v2_claim_sources_no_fk(
 
 
 def _migrate_v3_sweep(conn: duckdb.DuckDBPyConnection, dim: int) -> None:
-    """Add mean_embedding + last_swept to pages; create synthesis cluster tables."""
-    conn.execute(
-        f"ALTER TABLE pages ADD COLUMN IF NOT EXISTS mean_embedding FLOAT[{dim}]"
-    )
+    """Add last_swept to pages; create page_embeddings side table + synthesis cluster tables.
+
+    mean_embedding is stored in page_embeddings (slug TEXT PK, mean_embedding FLOAT[dim])
+    rather than as a column on pages. DuckDB 1.5.x has a bug where UPDATE with a FLOAT
+    array column on a table that has FK children (sections → pages) raises a spurious
+    constraint error. The side table avoids this entirely.
+    """
     conn.execute(
         "ALTER TABLE pages ADD COLUMN IF NOT EXISTS last_swept TIMESTAMPTZ"
     )
     for stmt in _SYNTHESIS_SEQUENCES:
         conn.execute(stmt)
-    for stmt in _synthesis_tables():
+    for stmt in _synthesis_tables(dim):
         conn.execute(stmt)
 
 
