@@ -121,7 +121,7 @@ def _synthesis_tables(dim: int = 768) -> list[str]:
 # Schema versioning and migrations
 # ---------------------------------------------------------------------------
 
-_CURRENT_VERSION = 3
+_CURRENT_VERSION = 4
 
 
 def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -179,6 +179,21 @@ def _migrate_v3_sweep(conn: duckdb.DuckDBPyConnection, dim: int) -> None:
         conn.execute(stmt)
 
 
+def _migrate_v4_synthesise(conn: duckdb.DuckDBPyConnection) -> None:
+    """v4: synthesised_into on pages; synthesis_page_slug on synthesis_clusters."""
+    try:
+        conn.execute("ALTER TABLE pages ADD COLUMN synthesised_into TEXT")
+    except Exception:
+        pass  # already exists
+    try:
+        conn.execute(
+            "ALTER TABLE synthesis_clusters ADD COLUMN synthesis_page_slug TEXT"
+        )
+    except Exception:
+        pass  # already exists
+    conn.execute("UPDATE schema_version SET version=4")
+
+
 def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
     """Create sequences and tables. Safe to call on an existing DB."""
     for stmt in _SEQUENCES:
@@ -192,3 +207,5 @@ def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
     if version < 3:
         _migrate_v3_sweep(conn, dim)
         _set_schema_version(conn, 3)
+    if version < 4:
+        _migrate_v4_synthesise(conn)
