@@ -104,7 +104,7 @@ wiki(page="existing-synthesis-slug")
 
 After reading, confirm the proposed slug or revise it. The slug must be a good standalone concept name — not prefixed with "synthesis-" unless necessary for disambiguation.
 
-### c. Write Synthesis Page
+### c. Plan the Synthesis Page
 
 **Derive the cluster path from the member page paths shown in the cluster detail.**
 Each member line includes `path: wiki/{cluster-path}/{slug}.md`. Take the directory
@@ -117,9 +117,46 @@ of any confirmed member — that is your cluster path.
 **Do NOT use the Read or Edit tools on wiki files to find paths.**
 Everything goes through `wiki()`.
 
-Write the synthesis page at `wiki/{cluster-path}/{slug}.md`.
+**Before writing a single word of the page, produce an outline out loud:**
 
-**Frontmatter must open the file. Include `synthesis: true`:**
+```
+Synthesis plan for [[slug]]:
+
+Section 1 — [heading]: [one sentence — the point this section makes]
+  Claim type: established consensus | experimental result at [scale] | novel hypothesis | counter-consensus
+  Sources: [[source-a.pdf]], [[source-b.pdf]]
+  Wiki links: [[concept-x]], [[concept-y]]
+
+Section 2 — [heading]: ...
+  Claim type: ...
+  Sources: ...
+  Wiki links: ...
+
+[repeat per section]
+
+Disagreements to surface: [list any conflicts between member pages]
+Single-source limitation: yes/no
+```
+
+**Framing gate — check each section before writing it:**
+- Can you name a specific `[[source.pdf]]` for every claim? If not, do not write the claim.
+- Is the claim type `experimental result`? Then the scope (model size, dataset, organism) must be in the sentence.
+- Does the sentence read like a textbook without the citation? That is encyclopedic voice — rewrite.
+
+**Claim-type framing rules (identical to `lacuna-ingest`):**
+
+| Claim type | Required framing |
+|---|---|
+| Established consensus | State as fact, cite inline: `"...claim. [[key.ext]]"` |
+| Experimental result | Attribute + scope: `"[[key.ext]] demonstrates, on [scale/context], that..."` |
+| Novel hypothesis | Hedge verb: `"[[key.ext]] hypothesises / proposes / suggests that..."` |
+| Counter-consensus | Flag inline: `"Contrary to [view], [[key.ext]] argues that..."` |
+
+**Slug casing rule:** slugs are always lowercase. Use pipe syntax for display: `[[slug|Display Text]]`. Never put a wikilink inside a `##` heading.
+
+### c-ii. Write the Synthesis Page — One Section at a Time
+
+Create the file with frontmatter and the title heading only:
 
 ```markdown
 ---
@@ -128,33 +165,29 @@ synthesis: true
 ---
 
 # slug
-
-[body]
 ```
 
-Tag rules: include each segment of the cluster path (e.g. `sRNA`, `quantification`) plus 1–3 cross-cutting concept tags. Lowercase, hyphen-separated.
+Tag rules: include each segment of the cluster path plus 1–3 cross-cutting concept tags. Lowercase, hyphen-separated.
 
-**Body structure:**
-- Open with a one-paragraph synthesis of what all members agree on
-- Separate section for disagreements or scope differences between sources
-- Cite all contributing sources inline at the sentence level: `claim [[source-a.pdf]] [[source-b.pdf]]`
-- For single-source clusters, add a note at the top: `> *This synthesis draws from a single source — [[source.pdf]].*`
+For single-source clusters, add this callout immediately after the title:
 
-**Framing rules (apply the same claim-type discipline as `lacuna-ingest`):**
-- State weight of evidence across sources, not any single source's view
-- Surface disagreements explicitly: "[[source-a.pdf]] argues X; [[source-b.pdf]] demonstrates Y at 270M parameters — the larger-scale result is more likely to generalise"
-- Hedge unproven claims: "[[source.pdf]] hypothesises that..."
-- Never write encyclopedic voice for experimental results
+```markdown
+> *This synthesis draws from a single source — [[source.pdf]].*
+```
 
-**Slug casing rule:** slugs are always lowercase. Use pipe syntax for display: `[[slug|Display Text]]`. Never put a wikilink inside a `##` heading.
-
-**Revision run:** edit the synthesis page in place. Add new content from new members; do not erase prior synthesis. Add a revision callout directly below frontmatter:
+For revision runs, add the revision callout immediately after frontmatter:
 
 ```markdown
 > *Revised [date]: added [[new-slug-a]], [[new-slug-b]].*
 ```
 
-**Excluded members section:** at the bottom of every synthesis page, add:
+**Then write each section from the plan as a separate Edit.** Before each section Edit, state out loud:
+
+> "Writing section [N] — [heading]: [claim]. Claim type: [type]. Source: [[key.ext]]."
+
+Do not write a section you did not plan. Do not combine multiple sections into one Edit.
+
+**After all planned sections**, append the Excluded members section as a final Edit:
 
 ```markdown
 ## Excluded members
