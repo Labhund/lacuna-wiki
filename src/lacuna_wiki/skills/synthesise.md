@@ -132,23 +132,40 @@ Mark the frontmatter todo `in_progress`. Write the file with frontmatter and tit
 ---
 tags: [tag1, tag2]
 synthesis: true
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
 ---
 
 # slug
 ```
 
-Tag rules: include each segment of the cluster path plus 1–3 cross-cutting concept tags. Lowercase, hyphen-separated.
+Tag rules: include each segment of the cluster path plus 1–3 cross-cutting concept tags. Lowercase, hyphen-separated. Use today's date for both `created` and `updated`.
 
-For single-source clusters, add this callout immediately after the title:
+**Always add the epistemic scope callout immediately after the title heading:**
 
 ```markdown
-> *This synthesis draws from a single source — [[source.pdf]].*
+> *Synthesis of [[member-a]], [[member-b]], [[member-c]] — reflects wiki state as of YYYY-MM-DD.
+> N distinct source(s) cited across members.*
 ```
 
-For revision runs, add the revision callout immediately after frontmatter:
+This is not optional. Every synthesis page must declare its provenance and date. Readers need to know this represents the current wiki's understanding, not an exhaustive literature review.
+
+**If any sources share lead authors**, add a second sentence to the callout:
 
 ```markdown
-> *Revised [date]: added [[new-slug-a]], [[new-slug-b]].*
+> *Note: [[source-a.pdf]] and [[source-b.pdf]] share authors — their agreement is not independent corroboration.*
+```
+
+For single-source clusters, replace the scope callout with:
+
+```markdown
+> *This synthesis draws from a single source — [[source.pdf]]. Claims are not cross-validated.*
+```
+
+For revision runs, add the revision callout directly below the scope callout:
+
+```markdown
+> *Revised YYYY-MM-DD: added [[new-slug-a]], [[new-slug-b]].*
 ```
 
 Mark the frontmatter todo `completed`.
@@ -170,9 +187,12 @@ State which member pages address this concept and what each source says:
 > [[member-c]] says: [or 'does not address this concept']
 >
 > Agreement: [what they agree on]
-> Disagreement: [what conflicts, or 'none']"
+> Disagreement: [what conflicts, or 'none']
+> Source independence: [do any cited sources share lead authors? If so, name them — their agreement is one voice, not many]"
 
 If no member page addresses the concept, drop it from the plan — do not invent coverage.
+
+**Agreement is only evidence of consensus if sources are independent.** Three papers from the same lab are one data point. State this explicitly in the section if it applies: `"[[a.pdf]] and [[b.pdf]] share lead authors — this represents one research group's view, not cross-lab consensus."`
 
 **ii. Wiki search**
 
@@ -274,6 +294,6 @@ Mark task completed.
 | Member page already synthesised into a different page | Noise — note the conflict in Excluded members; do not add a second notice |
 | Member is a reagent / tool rather than a concept | Noise — exclude; record reason |
 | Single-source cluster | Proceed; add single-source callout at top of synthesis page |
-| Revision run (existing synthesis page) | Read existing page first; edit in place; add revision callout |
+| Revision run (existing synthesis page) | Read existing page first; edit in place; add revision callout; update `updated:` date in frontmatter |
 | Cluster has > 10 members | Synthesise the highest-coverage members; record the rest as overflow in Excluded members table |
 | Proposed slug conflicts with an existing page | Append a disambiguating suffix: `nav-channel-pain-pharmacology-synthesis` |
