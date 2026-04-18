@@ -22,6 +22,7 @@ from lacuna_wiki.cli.adversary_commit import adversary_commit  # noqa: E402
 from lacuna_wiki.cli.install_skills import install_skills      # noqa: E402
 from lacuna_wiki.cli.move_source import move_source            # noqa: E402
 from lacuna_wiki.cli.sync import sync                          # noqa: E402
+from lacuna_wiki.cli.sweep import sweep                        # noqa: E402
 
 cli.add_command(add_source)
 cli.add_command(init)
@@ -35,3 +36,4 @@ cli.add_command(adversary_commit)
 cli.add_command(install_skills)
 cli.add_command(move_source)
 cli.add_command(sync)
+cli.add_command(sweep)
