@@ -16,6 +16,16 @@ console = Console()
 _TABLES = ["pages", "sections", "sources", "claims", "claim_sources", "source_chunks", "links"]
 
 
+def _daemon_api_url(vault_root) -> str | None:
+    """Return the status API base URL if the daemon is running, else None."""
+    from lacuna_wiki.daemon.process import is_running, read_pid
+    pid = read_pid()
+    if pid is None or not is_running(pid):
+        return None
+    mcp_port = int(load_config(vault_root).get("mcp_port", 7654))
+    return f"http://127.0.0.1:{mcp_port + 1}"
+
+
 def _sweep_counts(conn) -> dict[str, int]:
     """Compute counts for the four sweep rows."""
     gap_rows = conn.execute("""
@@ -81,33 +91,43 @@ def status() -> None:
                       "Run [bold]lacuna sync[/bold] to rebuild.")
         sys.exit(1)
 
-    conn = get_connection(db, readonly=True)
+    api_url = _daemon_api_url(vault_root)
+    if api_url:
+        import json
+        import urllib.request
+        try:
+            with urllib.request.urlopen(f"{api_url}/status", timeout=5) as resp:
+                data = json.loads(resp.read())
+            counts = data["tables"]
+            sweep = data["sweep"]
+        except Exception as exc:
+            console.print(f"[red]Daemon running but status API unreachable:[/red] {exc}")
+            sys.exit(1)
+    else:
+        conn = get_connection(db, readonly=True)
+        counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in _TABLES}
+        try:
+            sweep = _sweep_counts(conn)
+        except Exception:
+            sweep = {}
+        conn.close()
 
     tbl = Table(show_header=True, header_style="bold")
     tbl.add_column("Table", style="dim")
     tbl.add_column("Rows", justify="right")
 
-    # pages first
-    count = conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0]
-    tbl.add_row("pages", str(count))
-
-    # sweep rows inserted after pages
+    tbl.add_row("pages", str(counts.get("pages", 0)))
     try:
-        sweep = _sweep_counts(conn)
-        tbl.add_row("research gaps", str(sweep["research gaps"]))
-        tbl.add_row("ghost pages", str(sweep["ghost pages"]))
-        tbl.add_row("sweep backlog", str(sweep["sweep backlog"]))
-        tbl.add_row("synthesis queue", str(sweep["synthesis queue"]))
-        tbl.add_row("synthesised pages", str(sweep["synthesised pages"]))
+        tbl.add_row("research gaps", str(sweep.get("research gaps", sweep.get("research_gaps", 0))))
+        tbl.add_row("ghost pages", str(sweep.get("ghost pages", sweep.get("ghost_pages", 0))))
+        tbl.add_row("sweep backlog", str(sweep.get("sweep backlog", sweep.get("sweep_backlog", 0))))
+        tbl.add_row("synthesis queue", str(sweep.get("synthesis queue", sweep.get("synthesis_queue", 0))))
+        tbl.add_row("synthesised pages", str(sweep.get("synthesised pages", sweep.get("synthesised_pages", 0))))
     except Exception:
-        pass  # pre-v3 DB — skip sweep rows gracefully
+        pass
 
-    # remaining tables
     for t in _TABLES[1:]:
-        count = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-        tbl.add_row(t, str(count))
-
-    conn.close()
+        tbl.add_row(t, str(counts.get(t, 0)))
 
     config = load_config(vault_root)
     from lacuna_wiki.sources.embedder import check_embed_server
