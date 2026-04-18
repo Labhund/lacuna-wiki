@@ -23,6 +23,9 @@ _DEFAULTS: dict = {
     "embed_model": "nomic-embed-text:v1.5",
     "embed_dim": 768,
     "mcp_port": 7654,
+    "sync_workers": 4,
+    "embed_concurrency": 4,
+    "reader_pool_size": 3,
 }
 
 
@@ -49,6 +52,14 @@ def load_config(vault_root: Path) -> dict:
         if "port" in mcp:
             config["mcp_port"] = int(mcp["port"])
 
+        worker = data.get("worker", {})
+        if "sync_workers" in worker:
+            config["sync_workers"] = int(worker["sync_workers"])
+        if "embed_concurrency" in worker:
+            config["embed_concurrency"] = int(worker["embed_concurrency"])
+        if "reader_pool_size" in worker:
+            config["reader_pool_size"] = int(worker["reader_pool_size"])
+
     # Env var overrides (for CI / one-off runs without editing the file)
     if val := os.environ.get("LACUNA_EMBED_URL"):
         config["embed_url"] = val
@@ -58,6 +69,12 @@ def load_config(vault_root: Path) -> dict:
         config["embed_dim"] = int(val)
     if val := os.environ.get("LACUNA_MCP_PORT"):
         config["mcp_port"] = int(val)
+    if val := os.environ.get("LACUNA_SYNC_WORKERS"):
+        config["sync_workers"] = int(val)
+    if val := os.environ.get("LACUNA_EMBED_CONCURRENCY"):
+        config["embed_concurrency"] = int(val)
+    if val := os.environ.get("LACUNA_READER_POOL_SIZE"):
+        config["reader_pool_size"] = int(val)
 
     return config
 
@@ -79,6 +96,11 @@ def write_default_config(vault_root: Path) -> Path:
         },
         "mcp": {
             "port": _DEFAULTS["mcp_port"],
+        },
+        "worker": {
+            "sync_workers": _DEFAULTS["sync_workers"],
+            "embed_concurrency": _DEFAULTS["embed_concurrency"],
+            "reader_pool_size": _DEFAULTS["reader_pool_size"],
         },
     }
     cfg_file.write_bytes(tomli_w.dumps(data).encode("utf-8"))
