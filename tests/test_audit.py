@@ -351,3 +351,97 @@ def test_upsert_cluster_reopens_completed_cluster(vault):
         "SELECT slug FROM synthesis_cluster_members WHERE cluster_id=?", [cid]
     ).fetchall()}
     assert "page-c" in members
+
+
+# ---------------------------------------------------------------------------
+# precompute_unlinked_candidates + mark_swept fix
+# ---------------------------------------------------------------------------
+
+def test_precompute_unlinked_candidates_populates_table(tmp_path):
+    from lacuna_wiki.mcp.audit import precompute_unlinked_candidates
+    vault_root = tmp_path / "vault"
+    (vault_root / "wiki").mkdir(parents=True)
+    state = state_dir_for(vault_root)
+    state.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(db_path(vault_root)))
+    init_db(conn)
+
+    write_and_sync(vault_root, conn, "alpha.md",
+                   "# alpha\n\n## Intro\n\nTalks about beta concepts.\n")
+    write_and_sync(vault_root, conn, "beta.md",
+                   "# beta\n\n## Intro\n\nSome content here.\n")
+
+    precompute_unlinked_candidates(conn, vault_root)
+
+    alpha_id = conn.execute("SELECT id FROM pages WHERE slug='alpha'").fetchone()[0]
+    rows = conn.execute(
+        "SELECT candidate_slug FROM unlinked_candidates WHERE page_id=?", [alpha_id]
+    ).fetchall()
+    candidate_slugs = {r[0] for r in rows}
+    assert "beta" in candidate_slugs
+
+
+def test_precompute_skips_existing_wikilinks(tmp_path):
+    from lacuna_wiki.mcp.audit import precompute_unlinked_candidates
+    vault_root = tmp_path / "vault"
+    (vault_root / "wiki").mkdir(parents=True)
+    state = state_dir_for(vault_root)
+    state.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(db_path(vault_root)))
+    init_db(conn)
+
+    write_and_sync(vault_root, conn, "alpha.md",
+                   "# alpha\n\n## Intro\n\nLinks to [[beta]] already.\n")
+    write_and_sync(vault_root, conn, "beta.md",
+                   "# beta\n\n## Intro\n\nContent.\n")
+
+    precompute_unlinked_candidates(conn, vault_root)
+
+    alpha_id = conn.execute("SELECT id FROM pages WHERE slug='alpha'").fetchone()[0]
+    rows = conn.execute(
+        "SELECT candidate_slug FROM unlinked_candidates WHERE page_id=?", [alpha_id]
+    ).fetchall()
+    assert "beta" not in {r[0] for r in rows}
+
+
+def test_mark_swept_uses_last_modified_not_now(tmp_path):
+    from lacuna_wiki.mcp.audit import mark_swept
+    vault_root = tmp_path / "vault"
+    (vault_root / "wiki").mkdir(parents=True)
+    state = state_dir_for(vault_root)
+    state.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(db_path(vault_root)))
+    init_db(conn)
+
+    write_and_sync(vault_root, conn, "page-a.md",
+                   "# page-a\n\n## Intro\n\nSome content.\n")
+
+    mark_swept(conn, "page-a")
+
+    row = conn.execute(
+        "SELECT last_swept, last_modified FROM pages WHERE slug='page-a'"
+    ).fetchone()
+    last_swept, last_modified = row
+    assert last_swept == last_modified, (
+        f"last_swept={last_swept} should equal last_modified={last_modified}"
+    )
+
+
+def test_vault_audit_reads_from_cache_when_available(tmp_path):
+    from lacuna_wiki.mcp.audit import vault_audit, precompute_unlinked_candidates
+    vault_root = tmp_path / "vault"
+    (vault_root / "wiki").mkdir(parents=True)
+    state = state_dir_for(vault_root)
+    state.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(db_path(vault_root)))
+    init_db(conn)
+
+    write_and_sync(vault_root, conn, "p1.md",
+                   "# p1\n\n## S1\n\nContent A.\n\n## S2\n\nContent B.\n")
+    write_and_sync(vault_root, conn, "p2.md",
+                   "# p2\n\n## S1\n\nMentions p1 without link.\n\n## S2\n\nMore.\n")
+
+    precompute_unlinked_candidates(conn, vault_root)
+    result = vault_audit(conn)
+    assert isinstance(result, str)
+    assert "p2" in result

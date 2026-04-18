@@ -145,6 +145,67 @@ def _sweep_queue(conn: duckdb.DuckDBPyConnection) -> list[tuple]:
     return result
 
 
+_WIKILINK_RE = re.compile(r'\[\[[^\]]*\]\]')
+
+
+def precompute_unlinked_candidates(
+    conn: duckdb.DuckDBPyConnection,
+    vault_root,
+    page_ids: list[int] | None = None,
+) -> None:
+    """Build unlinked_candidates table in one vault pass.
+
+    For each target page, scan its body for mentions of other page slugs/titles
+    that are not already wikilinked. Results stored in unlinked_candidates.
+    If page_ids is given, only recompute those pages; otherwise recompute all.
+    """
+    from pathlib import Path
+    vault_root = Path(vault_root)
+
+    rows = conn.execute("SELECT id, slug, title, path FROM pages").fetchall()
+    all_pages = {r[0]: (r[1], r[2], r[3]) for r in rows}
+
+    target_ids = set(page_ids) if page_ids else set(all_pages.keys())
+
+    # Build (pattern, candidate_id, candidate_slug) triples once
+    candidate_patterns: list[tuple[re.Pattern, int, str]] = []
+    for cid, (cslug, ctitle, _) in all_pages.items():
+        candidate_patterns.append(
+            (re.compile(rf'\b{re.escape(cslug)}\b', re.IGNORECASE), cid, cslug)
+        )
+        if ctitle and ctitle.lower() != cslug.lower():
+            candidate_patterns.append(
+                (re.compile(rf'\b{re.escape(ctitle)}\b', re.IGNORECASE), cid, cslug)
+            )
+
+    for pid in target_ids:
+        if pid not in all_pages:
+            continue
+        slug, title, path = all_pages[pid]
+        full_path = vault_root / path
+        if not full_path.exists():
+            continue
+
+        text = full_path.read_text(encoding="utf-8")
+        body_stripped = _WIKILINK_RE.sub('', text)
+
+        mention_counts: dict[str, int] = {}
+        for pat, cid, cslug in candidate_patterns:
+            if cid == pid:
+                continue
+            hits = pat.findall(body_stripped)
+            if hits:
+                mention_counts[cslug] = mention_counts.get(cslug, 0) + len(hits)
+
+        conn.execute("DELETE FROM unlinked_candidates WHERE page_id=?", [pid])
+        for cslug, count in mention_counts.items():
+            conn.execute(
+                "INSERT INTO unlinked_candidates (page_id, candidate_slug, mention_count, computed_at)"
+                " VALUES (?, ?, ?, now())",
+                [pid, cslug, count],
+            )
+
+
 def _body_text(conn: duckdb.DuckDBPyConnection, page_id: int) -> str:
     """Concatenate all section content for a page."""
     rows = conn.execute(
@@ -160,7 +221,27 @@ def _top_unlinked_candidates(
     page_slug: str,
     top_n: int = 3,
 ) -> list[tuple[str, int]]:
-    """Find other page slugs/titles that appear unlinked in the page body."""
+    """Find other page slugs/titles that appear unlinked in the page body.
+
+    Reads from pre-computed cache when available; falls back to live scan.
+    """
+    cached = conn.execute(
+        "SELECT candidate_slug, mention_count FROM unlinked_candidates"
+        " WHERE page_id=? ORDER BY mention_count DESC LIMIT ?",
+        [page_id, top_n],
+    ).fetchall()
+    if cached:
+        return [(row[0], row[1]) for row in cached]
+    return _top_unlinked_candidates_live(conn, page_id, page_slug, top_n)
+
+
+def _top_unlinked_candidates_live(
+    conn: duckdb.DuckDBPyConnection,
+    page_id: int,
+    page_slug: str,
+    top_n: int = 3,
+) -> list[tuple[str, int]]:
+    """Live O(N×body) scan — used when cache is absent."""
     body = _body_text(conn, page_id)
     body_stripped = re.sub(r'\[\[[^\]]*\]\]', '', body)
 
@@ -345,11 +426,17 @@ def mark_swept(
 
     cluster dict: {"members": [slugs], "label": str, "rationale": str}
     """
-    row = conn.execute("SELECT id FROM pages WHERE slug=?", [slug]).fetchone()
+    row = conn.execute("SELECT id, last_modified FROM pages WHERE slug=?", [slug]).fetchone()
     if row is None:
         return f"Page '{slug}' not found — cannot mark swept."
+    page_id, last_modified = row
 
-    conn.execute("UPDATE pages SET last_swept=now() WHERE slug=?", [slug])
+    # Use last_modified not now() — prevents re-queueing after daemon's
+    # subsequent frontmatter writeback (which doesn't change the body hash).
+    conn.execute(
+        "UPDATE pages SET last_swept=? WHERE id=?",
+        [last_modified, page_id],
+    )
 
     if cluster:
         _upsert_cluster(conn, cluster, dim)
