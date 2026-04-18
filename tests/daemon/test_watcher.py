@@ -80,3 +80,53 @@ def test_initial_sync_handles_empty_wiki(vault):
     vault_root, conn = vault
     initial_sync(conn, vault_root, fake_embed)
     assert conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0] == 0
+
+
+def test_initial_sync_parallel_embeds_all_pages(tmp_path):
+    """initial_sync with n_workers>1 processes all pages."""
+    from lacuna_wiki.db.schema import init_db
+    from lacuna_wiki.vault import db_path, state_dir_for
+
+    vault_root = tmp_path / "vault"
+    (vault_root / "wiki").mkdir(parents=True)
+    state = state_dir_for(vault_root)
+    state.mkdir(parents=True, exist_ok=True)
+
+    for i in range(5):
+        (vault_root / "wiki" / f"page-{i}.md").write_text(
+            f"# page-{i}\n\n## Intro\n\nContent for page {i}.\n"
+        )
+
+    conn = duckdb.connect(str(db_path(vault_root)))
+    init_db(conn)
+
+    initial_sync(conn, vault_root, fake_embed, n_workers=2, embed_concurrency=2)
+
+    count = conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0]
+    assert count == 5
+
+
+def test_initial_sync_rebuilds_fts_once(tmp_path, monkeypatch):
+    """FTS rebuild happens exactly once after all pages are processed."""
+    import lacuna_wiki.daemon.sync as sync_mod
+    fts_calls = []
+    monkeypatch.setattr(sync_mod, "_rebuild_fts", lambda conn: fts_calls.append(1))
+
+    from lacuna_wiki.db.schema import init_db
+    from lacuna_wiki.vault import db_path, state_dir_for
+
+    vault_root = tmp_path / "vault"
+    (vault_root / "wiki").mkdir(parents=True)
+    state = state_dir_for(vault_root)
+    state.mkdir(parents=True, exist_ok=True)
+
+    for i in range(3):
+        (vault_root / "wiki" / f"page-{i}.md").write_text(
+            f"# page-{i}\n\n## Intro\n\nContent {i}.\n"
+        )
+
+    conn = duckdb.connect(str(db_path(vault_root)))
+    init_db(conn)
+
+    initial_sync(conn, vault_root, fake_embed, n_workers=2, embed_concurrency=2)
+    assert len(fts_calls) == 1, f"Expected 1 FTS rebuild, got {len(fts_calls)}"
