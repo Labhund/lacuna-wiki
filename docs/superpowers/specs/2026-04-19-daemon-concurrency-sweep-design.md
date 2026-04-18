@@ -53,6 +53,10 @@ GET  /sweep/status        → JSON {done, total, eta_seconds, job_id}
 
 Implementation: stdlib `http.server.HTTPServer` on a daemon thread. No new dependencies. Responses are JSON.
 
+**Port conflict:** if `mcp_port + 1` is already bound, the daemon logs a clear error and exits at startup (`Address already in use on port {port} — change mcp_port in .lacuna.toml`). No silent fallback.
+
+**Sweep cancellation (Ctrl-C on CLI):** if the user interrupts `lacuna sweep` mid-poll, the daemon continues running the job to completion. The job result sits in DB; no compute is wasted. A subsequent `lacuna sweep` call finds the queue already processed (or nearly so) and returns quickly. No `DELETE /sweep/{job_id}` endpoint — the cost of an orphaned job completing in the background is negligible and cancellation adds protocol complexity for no practical gain.
+
 ### CLI routing table
 
 | Command | Daemon running | Daemon not running |
@@ -109,9 +113,9 @@ Implementation: stdlib `http.server.HTTPServer` on a daemon thread. No new depen
 ### Writer thread contract
 
 - **Sole writer.** Nothing writes to the DB except the writer thread.
-- Workers push `WriteOp` named tuples: `(sql: str, params: list)` or `(fn: Callable, args: tuple)` for operations needing their own write result mid-transaction (e.g. `INSERT` then fetch new `id`).
-- If a worker needs a write result back (e.g. newly inserted `page_id`), it creates a `concurrent.futures.Future`, puts `(fn, args, future)` on the queue, then blocks on `future.result()`. The writer executes `fn(*args)` and resolves the future. The writer thread always makes progress (FIFO, never blocks on futures itself) — no deadlock risk.
-- The writer thread never calls `embed_fn`. It executes SQL only.
+- Workers push `WriteOp` named tuples: `(sql: str, params: list, future: Future | None)`. No callable path — the writer executes SQL only, never arbitrary Python. This eliminates the risk of a worker accidentally passing network I/O onto the writer thread.
+- If a worker needs a write result back (e.g. newly inserted `page_id`), it creates a `concurrent.futures.Future`, puts `WriteOp(sql, params, future)` on the queue, then blocks on `future.result()`. The writer executes the SQL, fetches the scalar result, and resolves the future. The writer thread always makes progress (FIFO, never blocks on futures itself) — no deadlock risk.
+- The writer thread never calls `embed_fn`. It executes SQL only. This is structural, not convention — the `WriteOp` type accepts no callables.
 
 ### Reader pool contract
 
@@ -126,7 +130,8 @@ Implementation: stdlib `http.server.HTTPServer` on a daemon thread. No new depen
 - `ThreadPoolExecutor(max_workers=sync_workers)`.
 - Each worker: read file → parse → acquire embed semaphore → embed → release semaphore → push WriteOps to queue.
 - Embed semaphore (`threading.Semaphore(embed_concurrency)`) caps simultaneous HTTP requests to the embedding server. Prevents GPU queue buildup on local servers.
-- **Parallelism ceiling:** effectively `embed_concurrency / embed_latency_per_page`. At `embed_concurrency=4` and 100ms/page: ~40 pages/sec. `sync_workers` can be set to nproc — it governs parse/embed concurrency, not write concurrency. The writer thread is never the bottleneck.
+- **Parallelism ceiling:** effectively `embed_concurrency / embed_latency_per_page`. At `embed_concurrency=4` and 50ms/page: ~80 pages/sec → 1,653 pages in ~20s. `sync_workers` can be set to nproc — it governs parse/embed concurrency, not write concurrency. The writer thread is never the bottleneck.
+- **FTS index is stale during a large sync.** The FTS rebuild runs once after the job completes, not per page. During a 1,653-page initial sync, BM25 search returns incomplete results. Vector search (section embeddings) is unaffected — embeddings are written per-page as workers complete. This is an acceptable tradeoff: 1,653 individual FTS rebuilds would dominate total runtime. The stale window is the duration of the sync job (~20–60s depending on embed server); search degrades gracefully to vector-only during this window.
 
 ### Daemon startup sequence
 
@@ -141,17 +146,25 @@ Implementation: stdlib `http.server.HTTPServer` on a daemon thread. No new depen
 
 Single-file changes are low-volume. Each watchdog event submits one task to the worker pool: read → parse → embed → push WriteOps. The writer thread processes them as they arrive. No special path — same producer-consumer as batch sync.
 
-### SIGUSR1 pause (unchanged mechanism, updated teardown)
+### SIGUSR1 pause (correctness fix to teardown)
 
-On pause signal:
+DuckDB's file lock is **process-level**, not connection-level. Any open connection in the daemon process holds the lock — including reader pool connections opened without `readonly=True`. Closing only `write_conn` during pause is insufficient; the CLI process still cannot open its own `write_conn`.
+
+**Fixed pause sequence:**
 1. Drain the write queue (finish in-flight writes).
-2. Stop watchdog observer.
-3. Close `write_conn`.
-4. Write pause ack file.
+2. Stop watchdog observer (no new work enters the queue).
+3. Wait for all in-flight worker tasks to complete (no reader pool connections in use).
+4. Close all reader pool connections.
+5. Close `write_conn`. The daemon process now holds zero DuckDB connections — file lock fully released.
+6. Write pause ack file.
 
-Reader pool connections remain open during pause — they hold no write lock. The CLI's exclusive `write_conn` does not conflict with open read connections in another process (they were opened by the daemon process, which is paused but alive).
+**Fixed resume sequence:**
+1. Reopen `write_conn`.
+2. Reopen `reader_pool_size` reader connections.
+3. Restart watchdog observer.
+4. Clear pause event.
 
-On resume: reopen `write_conn`, restart watchdog, clear pause event.
+The MCP SSE server and status HTTP API remain alive during pause — they will block on `pool.acquire()` if a request arrives, and unblock on resume. This is correct backpressure; a personal tool pausing for milliseconds while adversary-commit writes is not a usability concern.
 
 ---
 
@@ -222,13 +235,13 @@ New `[worker]` section in `.lacuna.toml`:
 ```toml
 [worker]
 sync_workers      = 4   # threads in the sync/sweep worker pool
-embed_concurrency = 2   # max simultaneous embed HTTP requests
+embed_concurrency = 4   # max simultaneous embed HTTP requests
 reader_pool_size  = 3   # reader connections in daemon pool
 ```
 
 **Defaults:**
 - `sync_workers = 4` — conservative; user bumps to nproc for large ingests.
-- `embed_concurrency = 2` — safe for local GPU server; bump to 4–8 if server handles it.
+- `embed_concurrency = 4` — reasonable default for a local GPU server (nomic-embed-text at ~50ms/request handles 4 concurrent without queue buildup). Not a rate-limited external API; 2 was unnecessarily conservative.
 - `reader_pool_size = 3` — MCP (1) + status API (1) + sweep reads (1).
 
 **Status API port** = `mcp_port + 1`. Derived, not configured. One fewer thing to set.
