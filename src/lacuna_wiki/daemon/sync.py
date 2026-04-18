@@ -39,6 +39,7 @@ def sync_page(
     vault_root: Path,
     rel_path: Path,
     embed_fn: EmbedFn,
+    rebuild_fts: bool = False,
 ) -> None:
     """Full sync of one wiki page to DB. Wraps everything in a transaction.
 
@@ -110,7 +111,8 @@ def sync_page(
     # constraint checker sees uncommitted section rows as still referencing pages,
     # which causes a spurious violation if we UPDATE pages inside the transaction.
     _update_mean_embedding(conn, page_id)
-    _rebuild_fts(conn)
+    if rebuild_fts:
+        _rebuild_fts(conn)
     _write_frontmatter_back(conn, full_path, slug, tags, body)
 
 
