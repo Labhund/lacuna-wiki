@@ -82,6 +82,13 @@ def _tables(dim: int) -> list[str]:
     content     TEXT,
     embedding   FLOAT[{dim}]
 )""",
+        """CREATE TABLE IF NOT EXISTS unlinked_candidates (
+    page_id        INTEGER NOT NULL REFERENCES pages(id),
+    candidate_slug TEXT NOT NULL,
+    mention_count  INTEGER NOT NULL,
+    computed_at    TIMESTAMP NOT NULL,
+    PRIMARY KEY (page_id, candidate_slug)
+)""",
     ]
 
 
@@ -121,7 +128,7 @@ def _synthesis_tables(dim: int = 768) -> list[str]:
 # Schema versioning and migrations
 # ---------------------------------------------------------------------------
 
-_CURRENT_VERSION = 4
+_CURRENT_VERSION = 5
 
 
 def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -194,6 +201,18 @@ def _migrate_v4_synthesise(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("UPDATE schema_version SET version=4")
 
 
+def _migrate_v5_unlinked_candidates(conn: duckdb.DuckDBPyConnection) -> None:
+    """v5: add unlinked_candidates cache table for sweep pre-computation."""
+    conn.execute("""CREATE TABLE IF NOT EXISTS unlinked_candidates (
+    page_id        INTEGER NOT NULL REFERENCES pages(id),
+    candidate_slug TEXT NOT NULL,
+    mention_count  INTEGER NOT NULL,
+    computed_at    TIMESTAMP NOT NULL,
+    PRIMARY KEY (page_id, candidate_slug)
+)""")
+    conn.execute("UPDATE schema_version SET version=5")
+
+
 def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
     """Create sequences and tables. Safe to call on an existing DB."""
     for stmt in _SEQUENCES:
@@ -209,3 +228,5 @@ def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
         _set_schema_version(conn, 3)
     if version < 4:
         _migrate_v4_synthesise(conn)
+    if version < 5:
+        _migrate_v5_unlinked_candidates(conn)

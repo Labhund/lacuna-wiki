@@ -148,3 +148,35 @@ def _column_names(conn, table: str) -> set[str]:
             f"WHERE table_name = '{table}' AND table_schema = 'main'"
         ).fetchall()
     }
+
+
+def test_schema_v5_unlinked_candidates_table_exists(db_conn):
+    tables = {row[0] for row in db_conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+    ).fetchall()}
+    assert "unlinked_candidates" in tables
+
+
+def test_schema_v5_unlinked_candidates_columns(db_conn):
+    cols = {row[0] for row in db_conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='unlinked_candidates'"
+    ).fetchall()}
+    assert cols == {"page_id", "candidate_slug", "mention_count", "computed_at"}
+
+
+def test_schema_v5_migration_from_v4(tmp_path):
+    import duckdb
+    from lacuna_wiki.db.schema import init_db, _set_schema_version
+    conn = duckdb.connect(str(tmp_path / "v4.db"))
+    init_db(conn)
+    conn.execute("DROP TABLE IF EXISTS unlinked_candidates")
+    _set_schema_version(conn, 4)
+    conn.close()
+
+    conn = duckdb.connect(str(tmp_path / "v4.db"))
+    init_db(conn)
+    tables = {row[0] for row in conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+    ).fetchall()}
+    assert "unlinked_candidates" in tables
+    conn.close()
