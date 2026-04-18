@@ -45,11 +45,28 @@ def is_running(pid: int) -> bool:
         return True  # process exists but we can't signal it
 
 
+def _close_all_for_pause(write_conn, reader_pool) -> None:
+    """Close all DuckDB connections so the file lock is fully released.
+
+    DuckDB's lock is process-level: any open connection holds it.
+    Closing only write_conn is insufficient — reader pool connections
+    must also be closed before the CLI can open its own write connection.
+    """
+    reader_pool.close()
+    try:
+        write_conn.close()
+    except Exception:
+        pass
+
+
 def _run_watchdog_loop(
     conn,
     vault_root: Path,
     embed_fn,
     pause_ack: Path,
+    reader_pool=None,
+    n_workers: int = 1,
+    embed_concurrency: int = 1,
 ) -> None:
     """Watchdog loop — runs on a background thread inside the daemon process.
 
@@ -61,7 +78,7 @@ def _run_watchdog_loop(
     from lacuna_wiki.daemon.watcher import WikiEventHandler, initial_sync
     from lacuna_wiki.vault import db_path
 
-    initial_sync(conn, vault_root, embed_fn)
+    initial_sync(conn, vault_root, embed_fn, n_workers=n_workers, embed_concurrency=embed_concurrency)
 
     from watchdog.observers import Observer
     handler = WikiEventHandler(conn, vault_root, embed_fn)
@@ -75,14 +92,18 @@ def _run_watchdog_loop(
                 with handler._lock:
                     observer.stop()
                 observer.join()
-                conn.close()
+
+                # Close ALL connections — DuckDB lock is process-level
+                _close_all_for_pause(conn, reader_pool)
 
                 pause_ack.write_text("paused")
                 while pause_ack.exists():
                     time.sleep(0.05)
 
-                # Re-open using the same db path
+                # Reopen everything
                 conn = get_connection(db_path(vault_root))
+                if reader_pool is not None:
+                    reader_pool.reopen()
                 handler._conn = conn
                 observer = Observer()
                 observer.schedule(handler, str(vault_root / "wiki"), recursive=True)
@@ -96,22 +117,19 @@ def _run_watchdog_loop(
     finally:
         observer.stop()
         observer.join()
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def run_daemon(vault_root: Path) -> None:
-    """Daemon entry point — runs the watchdog and MCP server in one process.
-
-    The write-mode DuckDB connection is owned by the watchdog thread.
-    The MCP server opens its own read-only connection to the same file
-    (allowed within the same process) and serves on SSE at the configured port.
-
-    This single-process design means no DuckDB file-lock contention:
-    status, search, and navigation all work while the daemon is running.
-    """
+    """Daemon entry point — runs the watchdog and MCP server in one process."""
     from functools import partial
 
     from lacuna_wiki.config import load_config
+    from lacuna_wiki.daemon.api import start_api_server
+    from lacuna_wiki.daemon.connections import ConnectionPool
     from lacuna_wiki.db.connection import get_connection
     from lacuna_wiki.mcp.server import make_wiki_tool, mcp_app
     from lacuna_wiki.sources.embedder import embed_texts
@@ -123,6 +141,9 @@ def run_daemon(vault_root: Path) -> None:
     config = load_config(vault_root)
     embed_fn = partial(embed_texts, url=config["embed_url"], model=config["embed_model"])
     mcp_port = int(config["mcp_port"])
+    n_workers = int(config["sync_workers"])
+    embed_concurrency = int(config["embed_concurrency"])
+    reader_pool_size = int(config["reader_pool_size"])
 
     db = db_path(vault_root)
     pause_ack = state_dir_for(vault_root) / "daemon.paused"
@@ -130,20 +151,39 @@ def run_daemon(vault_root: Path) -> None:
     # Write connection: owned by the watchdog thread
     write_conn = get_connection(db)
 
+    # Reader pool shared by MCP server, status HTTP API, and sweep queries
+    reader_pool = ConnectionPool(db, size=reader_pool_size)
+    reader_pool.open()
+
+    # Status HTTP API on mcp_port+1
+    sweep_state: dict = {"done": 0, "total": 0, "running": False}
+    api_server = start_api_server(
+        port=mcp_port + 1,
+        reader_pool=reader_pool,
+        sweep_state=sweep_state,
+        submit_sweep=lambda: None,
+    )
+
     watchdog_thread = threading.Thread(
         target=_run_watchdog_loop,
         args=(write_conn, vault_root, embed_fn, pause_ack),
+        kwargs={
+            "reader_pool": reader_pool,
+            "n_workers": n_workers,
+            "embed_concurrency": embed_concurrency,
+        },
         daemon=True,
         name="lacuna-watchdog",
     )
     watchdog_thread.start()
 
-    # Read-only connection: shared by the MCP server (same process — no lock conflict)
-    read_conn = get_connection(db, readonly=True)
+    # MCP server uses a reader pool connection (SELECT-only)
+    read_conn = reader_pool.acquire()
     make_wiki_tool(read_conn, embed_fn)
 
     try:
         mcp_app.run(transport="sse")
     finally:
+        api_server.shutdown()
         _PID_FILE.unlink(missing_ok=True)
         pause_ack.unlink(missing_ok=True)
