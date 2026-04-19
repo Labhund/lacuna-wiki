@@ -252,8 +252,9 @@ def test_audit_cache_bypassed_for_paginated_calls(vault):
     _audit_cache_invalidate()
 
 
-def test_audit_cache_invalidated_on_mark_swept(vault):
-    """After mark_swept, next vault_audit call re-scans (cache miss)."""
+def test_audit_cache_not_invalidated_by_mark_swept(vault):
+    """mark_swept does NOT invalidate the cache — stale data within TTL is acceptable
+    because semantic_hash prevents re-queue even if a swept page appears briefly."""
     import unittest.mock as mock
     import lacuna_wiki.mcp.audit as audit_mod
     from lacuna_wiki.mcp.server import dispatch_wiki, _audit_cache_invalidate
@@ -278,12 +279,12 @@ def test_audit_cache_invalidated_on_mark_swept(vault):
 
     with mock.patch.object(audit_mod, "vault_audit", counting_audit):
         dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
-                      link_audit=True, limit=10, vault_root=vault_root)
-        # mark_swept should invalidate the cache
+                      link_audit=True, limit=None, vault_root=vault_root)
         dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
                       sweep="alpha", mark_swept=True, vault_root=vault_root)
+        # Second vault_audit should hit cache (not re-scan after mark_swept)
         dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
-                      link_audit=True, limit=10, vault_root=vault_root)
+                      link_audit=True, limit=None, vault_root=vault_root)
 
-    assert call_count[0] == 2, f"vault_audit called {call_count[0]} times, expected 2 (invalidation)"
+    assert call_count[0] == 1, f"vault_audit called {call_count[0]} times, expected 1 (cache persists through mark_swept)"
     _audit_cache_invalidate()

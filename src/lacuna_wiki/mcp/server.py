@@ -121,7 +121,6 @@ def dispatch_wiki(
         # link_audit is a slug string
         slug = str(link_audit)
         if mark_swept:
-            _audit_cache_invalidate()
             return do_mark_swept(conn, slug, cluster=cluster, dim=dim)
         return page_audit(conn, slug, embed_fn, dim=dim, vault_root=vault_root)
 
