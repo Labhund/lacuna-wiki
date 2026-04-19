@@ -415,11 +415,38 @@ def _synthesis_candidates(
     results = []
     for cand_slug, cand_title in candidates:
         ratio = _coverage_ratio(conn, slug, cand_slug, dim)
-        if ratio > 0.30:
+        if ratio > 0.30 and _shared_source_count(conn, slug, cand_slug) >= 2:
             results.append((cand_slug, cand_title, ratio))
 
     results.sort(key=lambda x: -x[2])
     return results
+
+
+def _shared_source_count(
+    conn: duckdb.DuckDBPyConnection,
+    slug_a: str,
+    slug_b: str,
+) -> int:
+    """Count sources cited by both pages via claim_sources.
+
+    Prevents single-source co-citation (e.g. two pages both summarise the same
+    paper but cover entirely different topics) from flooding the synthesis queue.
+    """
+    row = conn.execute("""
+        SELECT COUNT(DISTINCT cs1.source_id)
+        FROM claims c1
+        JOIN claim_sources cs1 ON c1.id = cs1.claim_id
+        JOIN pages p1 ON c1.page_id = p1.id
+        WHERE p1.slug = ?
+          AND cs1.source_id IN (
+              SELECT cs2.source_id
+              FROM claims c2
+              JOIN claim_sources cs2 ON c2.id = cs2.claim_id
+              JOIN pages p2 ON c2.page_id = p2.id
+              WHERE p2.slug = ?
+          )
+    """, [slug_a, slug_b]).fetchone()
+    return row[0] if row else 0
 
 
 def _coverage_ratio(
