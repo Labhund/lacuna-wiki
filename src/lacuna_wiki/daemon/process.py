@@ -228,7 +228,7 @@ def run_daemon(vault_root: Path) -> None:
 
     try:
         mcp_app.settings.port = mcp_port
-        mcp_app.run(transport="sse")
+        mcp_app.run(transport="streamable-http")
     finally:
         api_server.shutdown()
         _PID_FILE.unlink(missing_ok=True)

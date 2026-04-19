@@ -214,13 +214,18 @@ Both skills support an `auto` mode for unattended runs — pass `"auto"` or `"ju
 
 **Claude Code**
 
-The daemon serves the MCP tool over SSE on `mcp_port` (default 7654). Point Claude Code at it directly — this avoids spawning a second process that would conflict with the daemon's DB lock:
+The daemon serves the MCP tool via StreamableHTTP on `mcp_port` (default 7654). Point Claude Code at it directly — this avoids spawning a second process that would conflict with the daemon's DB lock:
 
 ```bash
-claude mcp add --transport sse --scope user lacuna http://127.0.0.1:7654/sse
+claude mcp add --transport http --scope user lacuna http://127.0.0.1:7654/mcp
 ```
 
-The daemon must be running (`lacuna start`) for Claude Code to connect. If you need the tool available before the daemon is started, you can fall back to the stdio transport instead:
+**Hermes**
+```bash
+hermes mcp add lacuna --url http://127.0.0.1:7654/mcp
+```
+
+The daemon must be running (`lacuna start`) for either client to connect. If you need the tool available without the daemon, fall back to stdio:
 
 ```bash
 claude mcp add --scope user -e LACUNA_VAULT=/path/to/my-vault -- lacuna /full/path/to/lacuna mcp

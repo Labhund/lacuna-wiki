@@ -65,7 +65,7 @@ def start() -> None:
             mcp_port = load_config(vault_root).get("mcp_port", 7654)
             console.print(f"[green]✓[/green] Daemon started (PID {pid})")
             console.print(f"  Watching: {vault_root / 'wiki'}")
-            console.print(f"  MCP SSE:  http://127.0.0.1:{mcp_port}/sse")
+            console.print(f"  MCP:      http://127.0.0.1:{mcp_port}/mcp")
             console.print(f"  Log:      {_LOG_FILE}")
             return
 
