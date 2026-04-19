@@ -444,29 +444,47 @@ def test_semantic_hash_changes_on_real_edit(vault):
 
 
 def test_sweep_queue_stable_after_wikilink_added(vault):
-    """A page marked swept should not re-enter sweep queue when only a wikilink is added."""
+    """A page marked swept must not re-enter sweep queue when only a wikilink is added."""
     from lacuna_wiki.mcp.audit import mark_swept, vault_audit
     vault_root, conn = vault
-    write_and_sync(vault_root, conn, "alpha.md",
-                   "# alpha\n\n## Intro\n\nContent here.\n\n## Body\n\nMore content.\n")
-    write_and_sync(vault_root, conn, "beta.md",
-                   "# beta\n\n## Intro\n\nSome content.\n\n## Body\n\nMore.\n")
+
+    # Build a non-stub page: ≥100 words, ≥2 sections.
+    # The body already contains the word "beta" so that replacing it with [[beta]]
+    # is a pure wikilink-only edit (semantic_hash strips [[X]] to X, so hash is unchanged).
+    filler = "Word " * 58 + "beta something "  # 60 words per section, includes "beta"
+    alpha_body = (
+        "# alpha\n\n"
+        f"## Introduction\n\n{filler}\n\n"
+        f"## Background\n\n{filler}\n"
+    )
+    beta_body = (
+        "# beta\n\n"
+        f"## Introduction\n\n{'Word ' * 60}\n\n"
+        f"## Background\n\n{'Word ' * 60}\n"
+    )
+    write_and_sync(vault_root, conn, "alpha.md", alpha_body)
+    write_and_sync(vault_root, conn, "beta.md", beta_body)
+
+    # Confirm alpha is in the sweep queue before marking swept
+    audit_before = vault_audit(conn)
+    assert "alpha" in audit_before, "alpha should be in sweep queue before being swept"
 
     # Mark alpha swept
     mark_swept(conn, "alpha")
 
-    # Simulate sweep adding a wikilink: re-sync with wikilink added
-    write_and_sync(vault_root, conn, "alpha.md",
-                   "# alpha\n\n## Intro\n\nContent [[beta]] here.\n\n## Body\n\nMore content.\n")
+    # Simulate sweep adding a wikilink — replace bare "beta" with "[[beta]]".
+    # semantic_hash strips [[beta]] back to "beta", so hash must be unchanged.
+    alpha_linked = alpha_body.replace("beta something", "[[beta]] something")
+    write_and_sync(vault_root, conn, "alpha.md", alpha_linked)
 
-    audit = vault_audit(conn)
-    # alpha should NOT appear as a sweep queue entry
+    # alpha must NOT re-appear in the sweep queue
+    audit_after = vault_audit(conn)
     queue_section = False
-    for line in audit.split("\n"):
+    for line in audit_after.split("\n"):
         if "sweep queue" in line:
             queue_section = True
         if queue_section and "alpha" in line:
-            assert False, f"alpha unexpectedly in sweep queue after wikilink-only edit:\n{audit}"
+            assert False, f"alpha unexpectedly in sweep queue after wikilink-only edit:\n{audit_after}"
 
 
 def test_vault_audit_reads_from_cache_when_available(tmp_path):
