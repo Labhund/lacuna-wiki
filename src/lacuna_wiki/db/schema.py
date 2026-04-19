@@ -201,6 +201,18 @@ def _migrate_v4_synthesise(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("UPDATE schema_version SET version=4")
 
 
+def _migrate_v5_unlinked_candidates(conn: duckdb.DuckDBPyConnection) -> None:
+    """v5: add unlinked_candidates cache table for sweep pre-computation."""
+    conn.execute("""CREATE TABLE IF NOT EXISTS unlinked_candidates (
+    page_id        INTEGER NOT NULL REFERENCES pages(id),
+    candidate_slug TEXT NOT NULL,
+    mention_count  INTEGER NOT NULL,
+    computed_at    TIMESTAMP NOT NULL,
+    PRIMARY KEY (page_id, candidate_slug)
+)""")
+    conn.execute("UPDATE schema_version SET version=5")
+
+
 def _migrate_v6_semantic_hash(conn: duckdb.DuckDBPyConnection) -> None:
     """v6: semantic_hash and swept_semantic_hash on pages for wikilink-stable sweep detection."""
     try:
@@ -221,18 +233,6 @@ def _migrate_v7_sweep_lease(conn: duckdb.DuckDBPyConnection) -> None:
     except Exception:
         pass
     conn.execute("UPDATE schema_version SET version=7")
-
-
-def _migrate_v5_unlinked_candidates(conn: duckdb.DuckDBPyConnection) -> None:
-    """v5: add unlinked_candidates cache table for sweep pre-computation."""
-    conn.execute("""CREATE TABLE IF NOT EXISTS unlinked_candidates (
-    page_id        INTEGER NOT NULL REFERENCES pages(id),
-    candidate_slug TEXT NOT NULL,
-    mention_count  INTEGER NOT NULL,
-    computed_at    TIMESTAMP NOT NULL,
-    PRIMARY KEY (page_id, candidate_slug)
-)""")
-    conn.execute("UPDATE schema_version SET version=5")
 
 
 def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
