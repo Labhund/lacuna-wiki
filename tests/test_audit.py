@@ -443,6 +443,32 @@ def test_semantic_hash_changes_on_real_edit(vault):
     assert _semantic_hash(body_before) != _semantic_hash(body_after)
 
 
+def test_sweep_queue_stable_after_wikilink_added(vault):
+    """A page marked swept should not re-enter sweep queue when only a wikilink is added."""
+    from lacuna_wiki.mcp.audit import mark_swept, vault_audit
+    vault_root, conn = vault
+    write_and_sync(vault_root, conn, "alpha.md",
+                   "# alpha\n\n## Intro\n\nContent here.\n\n## Body\n\nMore content.\n")
+    write_and_sync(vault_root, conn, "beta.md",
+                   "# beta\n\n## Intro\n\nSome content.\n\n## Body\n\nMore.\n")
+
+    # Mark alpha swept
+    mark_swept(conn, "alpha")
+
+    # Simulate sweep adding a wikilink: re-sync with wikilink added
+    write_and_sync(vault_root, conn, "alpha.md",
+                   "# alpha\n\n## Intro\n\nContent [[beta]] here.\n\n## Body\n\nMore content.\n")
+
+    audit = vault_audit(conn)
+    # alpha should NOT appear as a sweep queue entry
+    queue_section = False
+    for line in audit.split("\n"):
+        if "sweep queue" in line:
+            queue_section = True
+        if queue_section and "alpha" in line:
+            assert False, f"alpha unexpectedly in sweep queue after wikilink-only edit:\n{audit}"
+
+
 def test_vault_audit_reads_from_cache_when_available(tmp_path):
     from lacuna_wiki.mcp.audit import vault_audit, precompute_unlinked_candidates
     vault_root = tmp_path / "vault"

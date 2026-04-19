@@ -52,7 +52,7 @@ def _sweep_counts(conn) -> dict[str, int]:
 
     backlog_rows = conn.execute("""
         SELECT id FROM pages
-        WHERE last_swept IS NULL OR last_modified > last_swept
+        WHERE swept_semantic_hash IS NULL OR semantic_hash != swept_semantic_hash
     """).fetchall()
     sweep_backlog = sum(1 for (pid,) in backlog_rows if pid not in stub_ids)
 
