@@ -137,8 +137,15 @@ def _offer_mcp_config(vault_root: Path) -> None:
             console.print(f"  [green]✓[/green] {len(copied)} skill(s) installed to OpenClaw")
 
 
-def _lacuna_mcp_entry(vault_root: Path) -> dict:
-    """Build the MCP server entry dict, using the full binary path."""
+def _lacuna_http_entry(vault_root: Path) -> dict:
+    """HTTP MCP entry pointing at the daemon. Used for Claude Code project config."""
+    from lacuna_wiki.config import load_config
+    port = int(load_config(vault_root).get("mcp_port", 7654))
+    return {"type": "http", "url": f"http://127.0.0.1:{port}/mcp"}
+
+
+def _lacuna_stdio_entry(vault_root: Path) -> dict:
+    """Stdio MCP entry (subprocess). Used for harnesses that don't support HTTP MCP."""
     cmd = shutil.which("lacuna") or "lacuna"
     return {
         "command": cmd,
@@ -150,26 +157,31 @@ def _lacuna_mcp_entry(vault_root: Path) -> dict:
 
 
 def _wire_claude_code(vault_root: Path) -> None:
-    """Wire lacuna into Claude Code: global mcp.json, project .mcp.json, and settings."""
-    entry = _lacuna_mcp_entry(vault_root)
+    """Wire lacuna into Claude Code: global mcp.json, project .mcp.json, and settings.
 
-    # 1. Global user config (~/.claude/mcp.json)
+    Project .mcp.json uses HTTP mode (daemon) — project config overrides global, so
+    this avoids the stdio subprocess opening the DB while the daemon holds the lock.
+    Global ~/.claude/mcp.json also uses HTTP mode so any Claude Code window benefits.
+    """
+    http_entry = _lacuna_http_entry(vault_root)
+
+    # 1. Global user config (~/.claude/mcp.json) — HTTP so it doesn't fight the daemon
     global_mcp = Path.home() / ".claude" / "mcp.json"
     global_mcp.parent.mkdir(parents=True, exist_ok=True)
     data: dict = {}
     if global_mcp.exists():
         data = json.loads(global_mcp.read_text())
     data.setdefault("mcpServers", {})
-    data["mcpServers"]["lacuna"] = entry
+    data["mcpServers"]["lacuna"] = http_entry
     global_mcp.write_text(json.dumps(data, indent=2) + "\n")
 
-    # 2. Project-level .mcp.json (Claude Code reads this for project MCP servers)
+    # 2. Project-level .mcp.json — HTTP mode; overrides global for this vault dir
     project_mcp = vault_root / ".mcp.json"
     proj_data: dict = {}
     if project_mcp.exists():
         proj_data = json.loads(project_mcp.read_text())
     proj_data.setdefault("mcpServers", {})
-    proj_data["mcpServers"]["lacuna"] = entry
+    proj_data["mcpServers"]["lacuna"] = http_entry
     project_mcp.write_text(json.dumps(proj_data, indent=2) + "\n")
 
     # 3. Project settings.local.json — auto-approve the project MCP server
@@ -193,7 +205,7 @@ def _wire_claude_code(vault_root: Path) -> None:
 def _merge_hermes_mcp(config_path: Path, vault_root: Path) -> None:
     """Add lacuna MCP server block to Hermes config.yaml."""
     import yaml
-    entry = _lacuna_mcp_entry(vault_root)
+    entry = _lacuna_stdio_entry(vault_root)
     data: dict = {}
     if config_path.exists():
         data = yaml.safe_load(config_path.read_text()) or {}
@@ -204,7 +216,7 @@ def _merge_hermes_mcp(config_path: Path, vault_root: Path) -> None:
 
 def _merge_openclaw_mcp(vault_root: Path) -> None:
     """Register lacuna as an MCP server in OpenClaw via its CLI."""
-    e = _lacuna_mcp_entry(vault_root)
+    e = _lacuna_stdio_entry(vault_root)
     entry = json.dumps({
         "command": e["command"],
         "args": e["args"],
