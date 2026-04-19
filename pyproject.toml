@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lacuna-wiki"
-version = "2.2.3"
+version = "2.2.4"
 description = "Give your agent a knowledge graph that compounds."
 readme = "README.md"
 license = { text = "MIT" }
