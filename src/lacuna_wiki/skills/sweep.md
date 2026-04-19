@@ -106,9 +106,9 @@ For each unlinked candidate, one at a time:
 
 > "[[concept]] appears N times in [section] without a wikilink. Adding to first mention."
 
-Apply with Edit. Verify the link was written. Do not batch multiple candidates into one edit.
+Edit the file (using your file-write tool) to insert the wikilink at the first mention in that section. Verify the link was written. Do not batch multiple candidates into one edit.
 
-**Slug casing rule:** when *adding* a new wikilink, the slug (the part the system resolves) must be lowercase. If the word appears capitalised in the text — protein names, proper nouns, acronyms — preserve the display text using the pipe syntax: `[[dicer|Dicer]]`, `[[ago2|AGO2]]`, `[[nav17-pain-signaling|NaV1.7]]`. Do **not** rewrite existing `[[Wikilinks]]` already in the file; only add links where none exist. Never put a wikilink inside a `##` section heading.
+**Slug casing rule:** when *adding* a new wikilink, the slug (the part the system resolves) must be lowercase. If the word appears capitalised in the text — protein names, proper nouns, acronyms, amino acids — preserve the display text using the pipe syntax: `[[dicer|Dicer]]`, `[[ago2|AGO2]]`, `[[nav17-pain-signaling|NaV1.7]]`. For amino acids, use species-protein-position naming: `[[human-trpv1-lys154|lys154]]`, `[[mouse-nav18-ser971|ser971]]`. Do **not** rewrite existing `[[Wikilinks]]` already in the file; only add links where none exist. Never put a wikilink inside a `##` section heading.
 
 **Semantic false-positive check:** before adding a link, confirm the word in context refers to the wiki concept, not a different sense of the same word. Example: "ninja throwing star" should not get `[[star]]` if `star` is an RNA aligner — read the sentence.
 
