@@ -46,7 +46,7 @@ def _run_sweep_locally(vault_root: Path, batch: int | None, force: bool) -> None
     conn.close()
 
 
-def _run_sweep_via_daemon(vault_root: Path) -> None:
+def _run_sweep_via_daemon(vault_root: Path, batch: int | None, force: bool) -> None:
     """Submit sweep job to daemon and poll until complete."""
     import json
     import time
@@ -57,11 +57,19 @@ def _run_sweep_via_daemon(vault_root: Path) -> None:
     mcp_port = int(config.get("mcp_port", 7654))
     api_base = f"http://127.0.0.1:{mcp_port + 1}"
 
+    payload = {}
+    if batch is not None:
+        payload["batch"] = batch
+    if force:
+        payload["force"] = True
+    body = json.dumps(payload).encode()
+
     try:
-        urllib.request.urlopen(
-            urllib.request.Request(f"{api_base}/sweep", method="POST"),
-            timeout=5,
+        req = urllib.request.Request(
+            f"{api_base}/sweep", data=body, method="POST",
+            headers={"Content-Type": "application/json"},
         )
+        urllib.request.urlopen(req, timeout=5)
     except Exception as exc:
         console.print(f"[red]Failed to submit sweep job to daemon:[/red] {exc}")
         sys.exit(1)
@@ -108,6 +116,6 @@ def sweep(batch: int | None, force: bool) -> None:
     from lacuna_wiki.daemon.process import is_running, read_pid
     pid = read_pid()
     if pid and is_running(pid):
-        _run_sweep_via_daemon(vault_root)
+        _run_sweep_via_daemon(vault_root, batch=batch, force=force)
     else:
         _run_sweep_locally(vault_root, batch=batch, force=force)

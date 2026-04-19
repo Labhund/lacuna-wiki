@@ -28,7 +28,7 @@ def api_server(tmp_path):
     sweep_state = {"done": 0, "total": 0, "running": False}
     server = start_api_server(
         port=17655, reader_pool=pool, sweep_state=sweep_state,
-        submit_sweep=lambda: None,
+        submit_sweep=lambda batch=None, force=False: None,
     )
     time.sleep(0.05)
     yield server, sweep_state
@@ -116,7 +116,7 @@ def test_port_conflict_raises_runtimeerror(tmp_path):
         with pytest.raises(RuntimeError, match="Address already in use"):
             start_api_server(
                 port=17656, reader_pool=pool, sweep_state={},
-                submit_sweep=lambda: None,
+                submit_sweep=lambda batch=None, force=False: None,
             )
     finally:
         blocker.close()

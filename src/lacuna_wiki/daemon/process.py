@@ -78,7 +78,13 @@ def _run_watchdog_loop(
     from lacuna_wiki.daemon.watcher import WikiEventHandler, initial_sync
     from lacuna_wiki.vault import db_path
 
+    # Close reader pool during initial_sync: FTS catalog rebuild needs exclusive
+    # DuckDB access and will deadlock against idle reader connections.
+    if reader_pool is not None:
+        reader_pool.close()
     initial_sync(conn, vault_root, embed_fn, n_workers=n_workers, embed_concurrency=embed_concurrency)
+    if reader_pool is not None:
+        reader_pool.reopen()
 
     from watchdog.observers import Observer
     handler = WikiEventHandler(conn, vault_root, embed_fn)
@@ -150,6 +156,8 @@ def run_daemon(vault_root: Path) -> None:
 
     # Write connection: owned by the watchdog thread
     write_conn = get_connection(db)
+    from lacuna_wiki.db.schema import init_db
+    init_db(write_conn)
 
     # Reader pool shared by MCP server, status HTTP API, and sweep queries
     reader_pool = ConnectionPool(db, size=reader_pool_size)
@@ -157,11 +165,48 @@ def run_daemon(vault_root: Path) -> None:
 
     # Status HTTP API on mcp_port+1
     sweep_state: dict = {"done": 0, "total": 0, "running": False}
+
+    def _run_sweep_job(batch: int | None = None, force: bool = False) -> None:
+        from lacuna_wiki.db.connection import get_connection
+        from lacuna_wiki.mcp.audit import precompute_unlinked_candidates
+        import logging
+        log = logging.getLogger(__name__)
+        conn = get_connection(db)
+        try:
+            if force:
+                rows = conn.execute("SELECT id FROM pages").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id FROM pages WHERE last_swept IS NULL OR last_modified > last_swept"
+                ).fetchall()
+            if batch is not None:
+                rows = rows[:batch]
+            page_ids = [r[0] for r in rows]
+            sweep_state.update({"done": 0, "total": len(page_ids), "running": True})
+            log.info("Sweep job started: %d pages to process.", len(page_ids))
+            for i, pid in enumerate(page_ids):
+                precompute_unlinked_candidates(conn, vault_root, page_ids=[pid])
+                sweep_state["done"] = i + 1
+            log.info("Sweep job complete: %d pages processed.", len(page_ids))
+        except Exception as exc:
+            log.error("Sweep job error: %s", exc)
+        finally:
+            sweep_state["running"] = False
+            conn.close()
+
+    def _submit_sweep(batch: int | None = None, force: bool = False) -> None:
+        if sweep_state.get("running"):
+            return
+        threading.Thread(
+            target=_run_sweep_job, kwargs={"batch": batch, "force": force},
+            daemon=True, name="lacuna-sweep",
+        ).start()
+
     api_server = start_api_server(
         port=mcp_port + 1,
         reader_pool=reader_pool,
         sweep_state=sweep_state,
-        submit_sweep=lambda: None,
+        submit_sweep=_submit_sweep,
     )
 
     watchdog_thread = threading.Thread(

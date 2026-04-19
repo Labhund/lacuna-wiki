@@ -118,14 +118,15 @@ def sync_page(
 
 def _rebuild_fts(conn: duckdb.DuckDBPyConnection) -> None:
     """Rebuild FTS index on sections after a sync commit. Non-fatal on failure."""
+    import logging
+    log = logging.getLogger(__name__)
+    log.info("Rebuilding FTS index on sections...")
     try:
-        conn.execute("PRAGMA drop_fts_index('sections')")
-    except Exception:
-        pass  # index may not exist yet
-    try:
-        conn.execute("PRAGMA create_fts_index('sections', 'id', 'content')")
-    except Exception:
-        pass  # non-fatal
+        conn.execute("PRAGMA create_fts_index('sections', 'id', 'content', overwrite=1)")
+        conn.commit()
+        log.info("FTS index rebuild complete.")
+    except Exception as exc:
+        log.warning("FTS index rebuild failed (non-fatal): %s", exc)
 
 
 # ---------------------------------------------------------------------------

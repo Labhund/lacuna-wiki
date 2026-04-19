@@ -59,7 +59,9 @@ def _make_handler(
 
         def do_POST(self):
             if self.path == "/sweep":
-                submit_sweep()
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length)) if length else {}
+                submit_sweep(batch=body.get("batch"), force=body.get("force", False))
                 self._json({"status": "accepted"})
             else:
                 self.send_response(404)
