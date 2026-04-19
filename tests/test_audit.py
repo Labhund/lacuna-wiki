@@ -505,3 +505,96 @@ def test_vault_audit_reads_from_cache_when_available(tmp_path):
     result = vault_audit(conn)
     assert isinstance(result, str)
     assert "p2" in result
+
+
+# ---------------------------------------------------------------------------
+# Lease behaviour tests
+# ---------------------------------------------------------------------------
+
+def test_leased_pages_excluded_from_second_audit(vault):
+    """Pages returned by first vault_audit(limit=2, claim=True) must not appear in the second agent's batch."""
+    from lacuna_wiki.mcp.audit import vault_audit
+    vault_root, conn = vault
+
+    filler = "Word " * 60
+    for i in range(4):
+        body = (
+            f"# page-{i}\n\n"
+            f"## Introduction\n\n{filler}\n\n"
+            f"## Background\n\n{filler}\n"
+        )
+        write_and_sync(vault_root, conn, f"page-{i}.md", body)
+
+    result1 = vault_audit(conn, limit=2, claim=True)
+    result2 = vault_audit(conn, limit=2, claim=True)
+
+    def slugs_from_result(text):
+        slugs = set()
+        in_queue = False
+        for line in text.split("\n"):
+            if "sweep queue" in line:
+                in_queue = True
+            if in_queue and line.strip() and line.strip()[0].isdigit():
+                # Format: "  1. slug — ..."
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    slugs.add(parts[1].rstrip("—").rstrip("."))
+        return slugs
+
+    slugs1 = slugs_from_result(result1)
+    slugs2 = slugs_from_result(result2)
+
+    assert slugs1, "First audit returned no slugs"
+    assert slugs2, "Second audit returned no slugs"
+    assert slugs1.isdisjoint(slugs2), f"Agents got overlapping pages: {slugs1 & slugs2}"
+
+
+def test_expired_lease_returns_page_to_queue(vault):
+    """A page with an expired lease must re-appear in vault_audit results."""
+    from lacuna_wiki.mcp.audit import vault_audit
+    from datetime import datetime, timezone, timedelta
+    vault_root, conn = vault
+
+    filler = "Word " * 60
+    body = (
+        "# alpha\n\n"
+        f"## Introduction\n\n{filler}\n\n"
+        f"## Background\n\n{filler}\n"
+    )
+    write_and_sync(vault_root, conn, "alpha.md", body)
+
+    # Set an already-expired lease on alpha
+    conn.execute(
+        "UPDATE pages SET sweep_lease_expires=? WHERE slug='alpha'",
+        [datetime.now(tz=timezone.utc) - timedelta(minutes=1)],
+    )
+
+    result = vault_audit(conn, limit=10)
+    assert "alpha" in result, "alpha with expired lease should appear in audit"
+
+
+def test_mark_swept_clears_lease(vault):
+    """mark_swept must clear sweep_lease_expires so the page is no longer locked."""
+    from lacuna_wiki.mcp.audit import vault_audit, mark_swept
+    vault_root, conn = vault
+
+    filler = "Word " * 60
+    body = (
+        "# alpha\n\n"
+        f"## Introduction\n\n{filler}\n\n"
+        f"## Background\n\n{filler}\n"
+    )
+    write_and_sync(vault_root, conn, "alpha.md", body)
+
+    # Claim alpha via vault_audit
+    vault_audit(conn, limit=1, claim=True)
+    row = conn.execute(
+        "SELECT sweep_lease_expires FROM pages WHERE slug='alpha'"
+    ).fetchone()
+    assert row[0] is not None, "Lease should be set after vault_audit(claim=True)"
+
+    mark_swept(conn, "alpha")
+    row = conn.execute(
+        "SELECT sweep_lease_expires FROM pages WHERE slug='alpha'"
+    ).fetchone()
+    assert row[0] is None, "Lease should be cleared after mark_swept"
