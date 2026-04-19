@@ -53,6 +53,8 @@ wiki(
 
 ## Step 0 — Get the Queue
 
+Before doing anything else, confirm the MCP tool is available. If it is not, stop immediately and tell the user: "The `wiki` MCP tool is not available. Check that the lacuna daemon is running (`lacuna start`) and that the MCP server is registered in your config." Do not attempt to debug or work around a missing tool — just report and stop.
+
 ```
 wiki(link_audit=True)
 ```
