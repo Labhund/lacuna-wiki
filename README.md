@@ -165,7 +165,7 @@ Windows support is in progress (Linux/macOS fully supported today).
 
 Ingest adds knowledge — sweep and synthesise maintain it.
 
-**Sweep** audits the vault for missing `[[wikilinks]]` and detects pages that are converging on the same concept. For each page in the backlog, the agent reads it, adds any missing links one at a time, and declares a synthesis cluster if multiple pages are describing the same concept from different angles. Run it periodically in Claude Code:
+**Sweep** audits the vault for missing `[[wikilinks]]` and detects pages that are converging on the same concept. For each page in the backlog, the agent reads it, adds any missing links one at a time, and declares a synthesis cluster if multiple pages are describing the same concept from different angles. Run it periodically in Claude Code / Hermes:
 
 ```
 /lacuna-sweep
