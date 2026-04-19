@@ -67,6 +67,7 @@ def _run_watchdog_loop(
     reader_pool=None,
     n_workers: int = 1,
     embed_concurrency: int = 1,
+    submit_sweep=None,
 ) -> None:
     """Watchdog loop — runs on a background thread inside the daemon process.
 
@@ -85,6 +86,8 @@ def _run_watchdog_loop(
     initial_sync(conn, vault_root, embed_fn, n_workers=n_workers, embed_concurrency=embed_concurrency)
     if reader_pool is not None:
         reader_pool.reopen()
+    if submit_sweep is not None:
+        submit_sweep()
 
     from watchdog.observers import Observer
     handler = WikiEventHandler(conn, vault_root, embed_fn)
@@ -229,6 +232,7 @@ def run_daemon(vault_root: Path) -> None:
             "reader_pool": reader_pool,
             "n_workers": n_workers,
             "embed_concurrency": embed_concurrency,
+            "submit_sweep": _submit_sweep,
         },
         daemon=True,
         name="lacuna-watchdog",
