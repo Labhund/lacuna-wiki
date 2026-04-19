@@ -200,15 +200,12 @@ def test_synthesise_and_link_audit_mutual_exclusion(vault):
 
 
 def test_audit_cache_hit_on_second_call(vault):
-    """Second vault_audit call with same limit returns cached result (vault_audit called once)."""
+    """Second vault_audit call with limit=None returns cached result (vault_audit called once)."""
     import unittest.mock as mock
     import lacuna_wiki.mcp.audit as audit_mod
-    import lacuna_wiki.mcp.server as server_mod
     from lacuna_wiki.mcp.server import dispatch_wiki, _audit_cache_invalidate
 
     vault_root, conn = vault
-
-    # Reset cache between test runs
     _audit_cache_invalidate()
 
     call_count = [0]
@@ -220,14 +217,38 @@ def test_audit_cache_hit_on_second_call(vault):
 
     with mock.patch.object(audit_mod, "vault_audit", counting_audit):
         r1 = dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
-                           link_audit=True, limit=10, vault_root=vault_root)
+                           link_audit=True, limit=None, vault_root=vault_root)
         r2 = dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
-                           link_audit=True, limit=10, vault_root=vault_root)
+                           link_audit=True, limit=None, vault_root=vault_root)
 
     assert call_count[0] == 1, f"vault_audit called {call_count[0]} times, expected 1 (cache hit)"
     assert r1 == r2
+    _audit_cache_invalidate()
 
-    # Clean up
+
+def test_audit_cache_bypassed_for_paginated_calls(vault):
+    """vault_audit with limit=N bypasses cache so each call can set leases."""
+    import unittest.mock as mock
+    import lacuna_wiki.mcp.audit as audit_mod
+    from lacuna_wiki.mcp.server import dispatch_wiki, _audit_cache_invalidate
+
+    vault_root, conn = vault
+    _audit_cache_invalidate()
+
+    call_count = [0]
+    _real_vault_audit = audit_mod.vault_audit
+
+    def counting_audit(conn, limit=None, claim=False):
+        call_count[0] += 1
+        return _real_vault_audit(conn, limit=limit, claim=claim)
+
+    with mock.patch.object(audit_mod, "vault_audit", counting_audit):
+        dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
+                      link_audit=True, limit=5, vault_root=vault_root)
+        dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
+                      link_audit=True, limit=5, vault_root=vault_root)
+
+    assert call_count[0] == 2, f"vault_audit called {call_count[0]} times, expected 2 (cache bypassed)"
     _audit_cache_invalidate()
 
 

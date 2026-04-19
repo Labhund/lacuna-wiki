@@ -108,10 +108,13 @@ def dispatch_wiki(
         if link_audit is True:
             if mark_swept:
                 return "Error: mark_swept requires a page slug. Use sweep='slug' or link_audit='slug', not link_audit=True."
+            if limit is not None:
+                # Paginated/claiming call — bypass cache so leases are always set
+                return vault_audit(conn, limit=limit, claim=True)
             cached = _audit_cache_get(limit)
             if cached is not None:
                 return cached
-            result = vault_audit(conn, limit=limit, claim=(limit is not None))
+            result = vault_audit(conn, limit=limit, claim=False)
             _audit_cache_set(limit, result)
             return result
 
