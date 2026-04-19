@@ -23,29 +23,46 @@ _STUB_MIN_SECTIONS = 2
 # vault_audit
 # ---------------------------------------------------------------------------
 
-def vault_audit(conn: duckdb.DuckDBPyConnection) -> str:
-    """Return formatted vault audit: research gaps, ghost pages, sweep queue."""
+def vault_audit(conn: duckdb.DuckDBPyConnection, limit: int | None = None) -> str:
+    """Return formatted vault audit: research gaps, ghost pages, sweep queue.
+
+    When limit is set, ghost pages are shown as a count only and the sweep
+    queue is truncated to the top `limit` entries — suitable for incremental
+    tick-off workflows on large vaults.
+    """
     gaps = _research_gaps(conn)
     ghosts = _ghost_pages(conn)
     queue = _sweep_queue(conn)
 
     lines: list[str] = []
 
-    lines.append(f"research gaps ({len(gaps)}):")
-    for slug, title, links, words in gaps:
-        lines.append(f"  {slug} — \"{title or slug}\" — {links} links, {words} words")
-
-    lines.append("")
-    lines.append(f"ghost pages ({len(ghosts)}):")
-    for ghost_slug, referrers in ghosts:
-        ref_str = ", ".join(
-            f"{r_slug} (×{count})" for r_slug, count in referrers[:3]
+    if limit is not None:
+        # Compact header — counts only, no enumeration of gaps/ghosts
+        lines.append(f"research gaps: {len(gaps)}")
+        lines.append(f"ghost pages: {len(ghosts)}")
+        lines.append("")
+        shown = queue[:limit]
+        lines.append(
+            f"sweep queue ({len(shown)} of {len(queue)} shown, ranked by link gap):"
         )
-        lines.append(f"  {ghost_slug} — linked from: {ref_str}")
+    else:
+        lines.append(f"research gaps ({len(gaps)}):")
+        for slug, title, links, words in gaps:
+            lines.append(f"  {slug} — \"{title or slug}\" — {links} links, {words} words")
 
-    lines.append("")
-    lines.append(f"sweep queue ({len(queue)} pages, ranked by link gap):")
-    for i, (slug, title, link_count, word_count, unlinked) in enumerate(queue, 1):
+        lines.append("")
+        lines.append(f"ghost pages ({len(ghosts)}):")
+        for ghost_slug, referrers in ghosts:
+            ref_str = ", ".join(
+                f"{r_slug} (×{count})" for r_slug, count in referrers[:3]
+            )
+            lines.append(f"  {ghost_slug} — linked from: {ref_str}")
+
+        lines.append("")
+        shown = queue
+        lines.append(f"sweep queue ({len(queue)} pages, ranked by link gap):")
+
+    for i, (slug, title, link_count, word_count, unlinked) in enumerate(shown, 1):
         unlinked_str = ", ".join(f"{s} (×{n})" for s, n in unlinked[:3])
         lines.append(
             f"  {i}. {slug} — \"{title or slug}\" — "

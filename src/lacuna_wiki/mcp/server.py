@@ -28,6 +28,7 @@ def dispatch_wiki(
     cluster: dict | None = None,
     synthesise: "bool | int | str | None" = None,
     commit: dict | None = None,
+    limit: "int | None" = None,
     dim: int = 768,
     vault_root: "Path | None" = None,
 ) -> str:
@@ -73,7 +74,7 @@ def dispatch_wiki(
         if link_audit is True:
             if mark_swept:
                 return "Error: mark_swept requires link_audit to be a page slug, not True."
-            return vault_audit(conn)
+            return vault_audit(conn, limit=limit)
 
         # link_audit is a slug string
         slug = str(link_audit)
@@ -127,6 +128,7 @@ def make_wiki_tool(
         cluster: dict | None = None,
         synthesise: "bool | int | str | None" = None,
         commit: dict | None = None,
+        limit: "int | None" = None,
     ) -> str:
         """Search the wiki or navigate to a page.
 
@@ -140,6 +142,11 @@ def make_wiki_tool(
         Audit: provide `link_audit=True` for full vault audit (research gaps, ghost
         pages, sweep queue). Provide `link_audit="slug"` for single-page audit
         (unlinked candidates + synthesis candidates).
+
+        Use `limit=N` with `link_audit=True` to get only the top N pages from the
+        sweep queue with summary counts for gaps/ghosts — much smaller output for
+        incremental tick-off workflows on large vaults. Call again after marking
+        pages swept to get the next batch.
 
         Sweep commit: provide `link_audit="slug"` and `mark_swept=True` to mark the
         page swept. Optionally include `cluster={"members": [...], "label": "...",
@@ -156,7 +163,8 @@ def make_wiki_tool(
                                      page=page, section=section, pages=pages,
                                      link_audit=link_audit, mark_swept=mark_swept,
                                      cluster=cluster, synthesise=synthesise,
-                                     commit=commit, dim=dim, vault_root=vault_root)
+                                     commit=commit, limit=limit, dim=dim,
+                                     vault_root=vault_root)
             finally:
                 conn.close()
         else:
@@ -164,4 +172,5 @@ def make_wiki_tool(
                                  page=page, section=section, pages=pages,
                                  link_audit=link_audit, mark_swept=mark_swept,
                                  cluster=cluster, synthesise=synthesise,
-                                 commit=commit, dim=dim, vault_root=vault_root)
+                                 commit=commit, limit=limit, dim=dim,
+                                 vault_root=vault_root)

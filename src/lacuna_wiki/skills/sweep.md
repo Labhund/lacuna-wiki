@@ -56,16 +56,18 @@ wiki(
 Before doing anything else, confirm the MCP tool is available. If it is not, stop immediately and tell the user: "The `wiki` MCP tool is not available. Check that the lacuna daemon is running (`lacuna start`) and that the MCP server is registered in your config." Do not attempt to debug or work around a missing tool — just report and stop.
 
 ```
-wiki(link_audit=True)
+wiki(link_audit=True, limit=10)
 ```
 
-State the full picture out loud:
+This returns summary counts for research gaps and ghost pages, plus the top 10 pages from the sweep queue. After sweeping a batch, call it again to get the next 10. Pass `limit=25` or omit `limit` entirely if a larger batch is needed.
+
+State the picture out loud:
 
 > "Vault audit:
-> Research gaps (N): [slugs] — stub pages, awaiting sources.
-> Ghost pages (N): [slugs] — linked but not yet created.
-> Sweep backlog (N pages): ranked by link gap. Top entries: [[slug]], [[slug]], [[slug]].
-> Synthesis queue currently holds N pending clusters for the synthesis engine.
+> Research gaps: N — stub pages awaiting sources.
+> Ghost pages: N — linked but not yet created.
+> Sweep backlog: N total, showing top 10. Top entries: [[slug]], [[slug]], [[slug]].
+> Synthesis queue: N pending clusters.
 > Any pages to skip or reprioritize?"
 
 **Standard mode:** pause. Adjust if needed.

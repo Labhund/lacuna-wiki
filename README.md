@@ -46,6 +46,7 @@ wiki(q="...", scope="sources")          # search raw source chunks directly
 
 # sweep — audit and queue
 wiki(link_audit=True)                   # vault audit: research gaps, ghost pages, sweep queue
+wiki(link_audit=True, limit=10)         # compact audit: counts only + top N sweep items (scalable)
 wiki(link_audit="slug")                 # single-page audit + top synthesis candidates
 wiki(link_audit="slug", mark_swept=True, cluster={...})  # mark page swept; optionally queue a cluster
 
