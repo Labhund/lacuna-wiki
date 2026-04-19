@@ -180,3 +180,26 @@ def test_schema_v5_migration_from_v4(tmp_path):
     ).fetchall()}
     assert "unlinked_candidates" in tables
     conn.close()
+
+
+def test_schema_v6_adds_semantic_and_swept_hash(tmp_path):
+    import duckdb
+    from lacuna_wiki.db.schema import init_db
+    conn = duckdb.connect(str(tmp_path / "wiki.db"))
+    init_db(conn)
+    cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='pages'"
+    ).fetchall()}
+    assert "semantic_hash" in cols
+    assert "swept_semantic_hash" in cols
+
+
+def test_schema_v7_adds_sweep_lease_expires(tmp_path):
+    import duckdb
+    from lacuna_wiki.db.schema import init_db
+    conn = duckdb.connect(str(tmp_path / "wiki.db"))
+    init_db(conn)
+    cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='pages'"
+    ).fetchall()}
+    assert "sweep_lease_expires" in cols
