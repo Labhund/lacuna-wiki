@@ -119,20 +119,17 @@ def sync_page(
 def _rebuild_fts(conn: duckdb.DuckDBPyConnection) -> None:
     """Rebuild FTS index on sections after a sync commit. Non-fatal on failure.
 
-    Avoids overwrite=1 which writes a bare DROP to the WAL before the CREATE —
-    if the process dies between them the WAL replays an unmatched DROP that
-    fails with a dependency error on next startup. Instead we checkpoint,
-    drop with CASCADE explicitly, checkpoint again to flush the drop, then
-    create fresh — each step lands in a clean WAL segment.
+    CHECKPOINT before the pragma flushes any stale WAL shadows so DuckDB's
+    internal drop+create (overwrite=1) sees a clean catalog state.
+    WAL corruption from a mid-rebuild kill is handled by auto-recovery in
+    run_daemon rather than here.
     """
     import logging
     log = logging.getLogger(__name__)
     log.info("Rebuilding FTS index on sections...")
     try:
         conn.execute("CHECKPOINT")
-        conn.execute("DROP SCHEMA IF EXISTS fts_main_sections CASCADE")
-        conn.execute("CHECKPOINT")
-        conn.execute("PRAGMA create_fts_index('sections', 'id', 'content')")
+        conn.execute("PRAGMA create_fts_index('sections', 'id', 'content', overwrite=1)")
         conn.commit()
         conn.execute("CHECKPOINT")
         log.info("FTS index rebuild complete.")

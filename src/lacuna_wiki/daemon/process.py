@@ -154,8 +154,21 @@ def run_daemon(vault_root: Path) -> None:
     db = db_path(vault_root)
     pause_ack = state_dir_for(vault_root) / "daemon.paused"
 
-    # Write connection: owned by the watchdog thread
-    write_conn = get_connection(db)
+    # Write connection: owned by the watchdog thread.
+    # Auto-recover from corrupt WAL left by a mid-FTS-rebuild kill.
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    wal = Path(str(db) + ".wal")
+    try:
+        write_conn = get_connection(db)
+    except Exception as _exc:
+        if "Failure while replaying WAL" in str(_exc) and wal.exists():
+            _log.warning("Corrupt WAL detected — deleting and retrying: %s", wal)
+            wal.unlink()
+            write_conn = get_connection(db)
+        else:
+            raise
+
     from lacuna_wiki.db.schema import init_db
     init_db(write_conn)
 
