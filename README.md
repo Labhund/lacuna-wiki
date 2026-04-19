@@ -132,9 +132,14 @@ Then set your vault's `.lacuna.toml` (created by `lacuna init`):
 url = "http://localhost:11434"   # Ollama's default port
 model = "nomic-embed-text:v1.5"  # default — can omit
 dim = 768                         # default — can omit
+
+[worker]
+sync_workers = 4        # parallel threads for initial_sync (default: 4)
+embed_concurrency = 4   # simultaneous embed requests (default: 4)
+reader_pool_size = 3    # read connections for MCP + status API (default: 3)
 ```
 
-`LACUNA_EMBED_URL`, `LACUNA_EMBED_MODEL`, and `LACUNA_EMBED_DIM` env vars also work for one-off overrides.
+`LACUNA_EMBED_URL`, `LACUNA_EMBED_MODEL`, `LACUNA_EMBED_DIM`, `LACUNA_SYNC_WORKERS`, `LACUNA_EMBED_CONCURRENCY`, and `LACUNA_READER_POOL_SIZE` env vars also work for one-off overrides.
 
 > **Changing models?** Set `embed.dim` in `.lacuna.toml` before running `lacuna init` — the schema is created from that value. Changing the model or dim after ingesting sources will invalidate existing embeddings. A `lacuna reindex` command to re-embed everything in place is planned; for now, delete `~/.lacuna/vaults/<your-vault>/` and re-run `lacuna init` to start fresh.
 
@@ -165,6 +170,16 @@ Ingest adds knowledge — sweep and synthesise maintain it.
 ```
 /lacuna-sweep
 ```
+
+After a large ingest, pre-warm the candidate cache before running the sweep skill so it doesn't time out on big vaults:
+
+```bash
+lacuna sweep           # process all pages in the backlog
+lacuna sweep --batch 50  # process the next 50 pages
+lacuna sweep --force     # recompute all pages regardless of last_swept
+```
+
+When the daemon is running, `lacuna sweep` submits the job to the daemon and polls for completion — the DB stays locked to one writer. When no daemon is running, it runs directly.
 
 **Synthesise** consumes the synthesis queue populated by sweep. It reads each cluster, writes a unified synthesis page from the combined content of the member pages, and marks the members as synthesised. The synthesis page surfaces shared ground, disagreements, and source provenance in one place:
 
@@ -199,31 +214,19 @@ Both skills support an `auto` mode for unattended runs — pass `"auto"` or `"ju
 
 **Claude Code**
 
-Claude Code requires two files. First, the server config at your vault root:
+The daemon serves the MCP tool over SSE on `mcp_port` (default 7654). Point Claude Code at it directly — this avoids spawning a second process that would conflict with the daemon's DB lock:
 
-```json
-// /path/to/my-vault/.mcp.json
-{
-  "mcpServers": {
-    "lacuna": {
-      "command": "/full/path/to/lacuna",
-      "args": ["mcp"],
-      "env": { "LACUNA_VAULT": "/path/to/my-vault" }
-    }
-  }
-}
+```bash
+claude mcp add --transport sse --scope user lacuna http://127.0.0.1:7654/sse
 ```
 
-Find the full path with `which lacuna`. Then auto-approve it so Claude Code connects without a prompt:
+The daemon must be running (`lacuna start`) for Claude Code to connect. If you need the tool available before the daemon is started, you can fall back to the stdio transport instead:
 
-```json
-// /path/to/my-vault/.claude/settings.local.json
-{
-  "enableAllProjectMcpServers": true
-}
+```bash
+claude mcp add --scope user -e LACUNA_VAULT=/path/to/my-vault -- lacuna /full/path/to/lacuna mcp
 ```
 
-Add `.claude/settings.local.json` to your `.gitignore` — it's a per-user approval file. Optionally also add the entry to `~/.claude/mcp.json` as a global fallback.
+Find the full path with `which lacuna`.
 
 **Hermes (`~/.hermes/config.yaml`)**
 ```yaml
