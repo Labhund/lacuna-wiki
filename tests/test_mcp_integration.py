@@ -197,3 +197,72 @@ def test_synthesise_and_link_audit_mutual_exclusion(vault):
     _, conn = vault
     result = dispatch_wiki(conn, fake_embed, synthesise=True, link_audit=True)
     assert "error" in result.lower() or "mutually exclusive" in result.lower()
+
+
+def test_audit_cache_hit_on_second_call(vault):
+    """Second vault_audit call with same limit returns cached result (vault_audit called once)."""
+    import unittest.mock as mock
+    import lacuna_wiki.mcp.audit as audit_mod
+    import lacuna_wiki.mcp.server as server_mod
+    from lacuna_wiki.mcp.server import dispatch_wiki, _audit_cache_invalidate
+
+    vault_root, conn = vault
+
+    # Reset cache between test runs
+    _audit_cache_invalidate()
+
+    call_count = [0]
+    _real_vault_audit = audit_mod.vault_audit
+
+    def counting_audit(conn, limit=None, claim=False):
+        call_count[0] += 1
+        return _real_vault_audit(conn, limit=limit, claim=claim)
+
+    with mock.patch.object(audit_mod, "vault_audit", counting_audit):
+        r1 = dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
+                           link_audit=True, limit=10, vault_root=vault_root)
+        r2 = dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
+                           link_audit=True, limit=10, vault_root=vault_root)
+
+    assert call_count[0] == 1, f"vault_audit called {call_count[0]} times, expected 1 (cache hit)"
+    assert r1 == r2
+
+    # Clean up
+    _audit_cache_invalidate()
+
+
+def test_audit_cache_invalidated_on_mark_swept(vault):
+    """After mark_swept, next vault_audit call re-scans (cache miss)."""
+    import unittest.mock as mock
+    import lacuna_wiki.mcp.audit as audit_mod
+    from lacuna_wiki.mcp.server import dispatch_wiki, _audit_cache_invalidate
+    from lacuna_wiki.daemon.sync import sync_page
+    from pathlib import Path
+
+    vault_root, conn = vault
+    _audit_cache_invalidate()
+
+    filler = "Word " * 60
+    page_body = f"# alpha\n\n## Introduction\n\n{filler}\n\n## Background\n\n{filler}\n"
+    p = vault_root / "wiki" / "alpha.md"
+    p.write_text(page_body, encoding="utf-8")
+    sync_page(conn, vault_root, Path("wiki/alpha.md"), lambda t: [[0.0]*768]*len(t))
+
+    call_count = [0]
+    _real = audit_mod.vault_audit
+
+    def counting_audit(conn, limit=None, claim=False):
+        call_count[0] += 1
+        return _real(conn, limit=limit, claim=claim)
+
+    with mock.patch.object(audit_mod, "vault_audit", counting_audit):
+        dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
+                      link_audit=True, limit=10, vault_root=vault_root)
+        # mark_swept should invalidate the cache
+        dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
+                      sweep="alpha", mark_swept=True, vault_root=vault_root)
+        dispatch_wiki(conn, lambda t: [[0.0]*768]*len(t),
+                      link_audit=True, limit=10, vault_root=vault_root)
+
+    assert call_count[0] == 2, f"vault_audit called {call_count[0]} times, expected 2 (invalidation)"
+    _audit_cache_invalidate()

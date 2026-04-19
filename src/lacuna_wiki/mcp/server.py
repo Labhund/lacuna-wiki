@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable
+import threading
+import time
 
 import duckdb
 from mcp.server.fastmcp import FastMCP
@@ -13,6 +15,31 @@ from lacuna_wiki.mcp.search import hybrid_search
 EmbedFn = Callable[[list[str]], list[list[float]]]
 
 mcp_app = FastMCP("lacuna")
+
+_audit_cache: dict = {}  # {limit: (result_str, timestamp)}
+_audit_cache_lock = threading.Lock()
+_AUDIT_CACHE_TTL = 300.0
+
+
+def _audit_cache_get(limit) -> str | None:
+    with _audit_cache_lock:
+        entry = _audit_cache.get(limit)
+    if entry is None:
+        return None
+    result, ts = entry
+    if time.monotonic() - ts < _AUDIT_CACHE_TTL:
+        return result
+    return None
+
+
+def _audit_cache_set(limit, result: str) -> None:
+    with _audit_cache_lock:
+        _audit_cache[limit] = (result, time.monotonic())
+
+
+def _audit_cache_invalidate() -> None:
+    with _audit_cache_lock:
+        _audit_cache.clear()
 
 
 def dispatch_wiki(
@@ -81,11 +108,17 @@ def dispatch_wiki(
         if link_audit is True:
             if mark_swept:
                 return "Error: mark_swept requires a page slug. Use sweep='slug' or link_audit='slug', not link_audit=True."
-            return vault_audit(conn, limit=limit)
+            cached = _audit_cache_get(limit)
+            if cached is not None:
+                return cached
+            result = vault_audit(conn, limit=limit, claim=(limit is not None))
+            _audit_cache_set(limit, result)
+            return result
 
         # link_audit is a slug string
         slug = str(link_audit)
         if mark_swept:
+            _audit_cache_invalidate()
             return do_mark_swept(conn, slug, cluster=cluster, dim=dim)
         return page_audit(conn, slug, embed_fn, dim=dim, vault_root=vault_root)
 
