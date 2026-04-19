@@ -97,16 +97,29 @@ def claims_command(mode: str, page_slug: str | None) -> None:
         sys.exit(1)
 
     db = db_path(vault_root)
-    from lacuna_wiki.db.connection import get_connection
-    conn = get_connection(db, readonly=True)
 
-    try:
-        results = list_claims(conn, mode, page_slug=page_slug)
-    except ValueError as e:
-        click.echo(str(e), err=True)
-        sys.exit(1)
-    finally:
-        conn.close()
+    from lacuna_wiki.cli.status import _daemon_api_url
+    api_url = _daemon_api_url(vault_root)
+    if api_url:
+        import json
+        import urllib.request
+        qs = f"?mode={mode}" + (f"&page={page_slug}" if page_slug else "")
+        try:
+            with urllib.request.urlopen(f"{api_url}/claims{qs}", timeout=5) as resp:
+                results = json.loads(resp.read())["claims"]
+        except Exception as exc:
+            click.echo(f"Daemon running but claims API unreachable: {exc}", err=True)
+            sys.exit(1)
+    else:
+        from lacuna_wiki.db.connection import get_connection
+        conn = get_connection(db, readonly=True)
+        try:
+            results = list_claims(conn, mode, page_slug=page_slug)
+        except ValueError as e:
+            click.echo(str(e), err=True)
+            sys.exit(1)
+        finally:
+            conn.close()
 
     if not results:
         click.echo(f"No claims found (mode={mode}).")

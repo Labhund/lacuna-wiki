@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
 import duckdb
 from watchdog.events import FileSystemEventHandler
 
+import lacuna_wiki.daemon.sync as _sync_mod
 from lacuna_wiki.daemon.sync import sync_page
 
 EmbedFn = Callable[[list[str]], list[list[float]]]
@@ -71,11 +73,57 @@ def initial_sync(
     conn: duckdb.DuckDBPyConnection,
     vault_root: Path,
     embed_fn: EmbedFn,
+    n_workers: int = 1,
+    embed_concurrency: int = 1,
 ) -> None:
-    """Sync all existing wiki/*.md files at daemon startup."""
+    """Sync all existing wiki/*.md files at daemon startup.
+
+    When n_workers > 1, pages are processed in parallel using a temporary
+    ConnectionPool. Each worker gets its own DB connection and writes to
+    disjoint page rows — no conflicts. FTS index is rebuilt once at the end.
+    The embed semaphore caps simultaneous HTTP requests to the embedding server.
+    """
     wiki_dir = vault_root / "wiki"
-    for md_file in sorted(wiki_dir.rglob("*.md")):
-        rel = md_file.relative_to(vault_root)
-        if ".sessions" in rel.parts:
-            continue
-        sync_page(conn, vault_root, rel, embed_fn)
+    md_files = [
+        md_file.relative_to(vault_root)
+        for md_file in sorted(wiki_dir.rglob("*.md"))
+        if ".sessions" not in md_file.relative_to(vault_root).parts
+    ]
+    if not md_files:
+        return
+
+    embed_sem = threading.Semaphore(embed_concurrency)
+
+    def throttled_embed(texts):
+        with embed_sem:
+            return embed_fn(texts)
+
+    if n_workers <= 1:
+        for rel in md_files:
+            sync_page(conn, vault_root, rel, throttled_embed, rebuild_fts=False)
+        _sync_mod._rebuild_fts(conn)
+        return
+
+    from lacuna_wiki.daemon.connections import ConnectionPool
+    from lacuna_wiki.vault import db_path as get_db_path
+
+    db = get_db_path(vault_root)
+    worker_pool = ConnectionPool(db, size=n_workers)
+    worker_pool.open()
+
+    def sync_one(rel_path):
+        wconn = worker_pool.acquire()
+        try:
+            sync_page(wconn, vault_root, rel_path, throttled_embed, rebuild_fts=False)
+        finally:
+            worker_pool.release(wconn)
+
+    try:
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = [executor.submit(sync_one, rel) for rel in md_files]
+            for fut in as_completed(futures):
+                fut.result()
+    finally:
+        worker_pool.close()
+
+    _sync_mod._rebuild_fts(conn)

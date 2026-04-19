@@ -221,7 +221,7 @@ def test_sync_page_builds_fts_index(vault, fake_embed):
     vault_root, conn = vault
     conn.execute("LOAD fts")
     write_page(vault_root, "page.md", "# P\n\n## Methods\n\nAttention computes queries keys values.\n")
-    sync_page(conn, vault_root, Path("wiki/page.md"), fake_embed)
+    sync_page(conn, vault_root, Path("wiki/page.md"), fake_embed, rebuild_fts=True)
     rows = conn.execute(
         "SELECT id, fts_main_sections.match_bm25(id, 'queries') as s"
         " FROM sections WHERE s IS NOT NULL"
@@ -235,3 +235,28 @@ def test_sync_page_unknown_source_key_skips_claim_source(vault, fake_embed):
     sync_page(conn, vault_root, Path("wiki/page.md"), fake_embed)
     assert conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM claim_sources").fetchone()[0] == 0
+
+
+def test_sync_page_does_not_rebuild_fts_by_default(vault, fake_embed, monkeypatch):
+    """sync_page must not call _rebuild_fts unless rebuild_fts=True."""
+    import lacuna_wiki.daemon.sync as sync_mod
+    calls = []
+    monkeypatch.setattr(sync_mod, "_rebuild_fts", lambda conn: calls.append(1))
+
+    vault_root, conn = vault
+    page = vault_root / "wiki" / "test-page.md"
+    page.write_text("# test-page\n\n## Intro\n\nHello world.\n")
+    sync_page(conn, vault_root, Path("wiki/test-page.md"), fake_embed)
+    assert calls == [], "sync_page should not rebuild FTS by default"
+
+
+def test_sync_page_rebuilds_fts_when_requested(vault, fake_embed, monkeypatch):
+    import lacuna_wiki.daemon.sync as sync_mod
+    calls = []
+    monkeypatch.setattr(sync_mod, "_rebuild_fts", lambda conn: calls.append(1))
+
+    vault_root, conn = vault
+    page = vault_root / "wiki" / "test-page.md"
+    page.write_text("# test-page\n\n## Intro\n\nHello world.\n")
+    sync_page(conn, vault_root, Path("wiki/test-page.md"), fake_embed, rebuild_fts=True)
+    assert calls == [1], "sync_page should rebuild FTS when rebuild_fts=True"

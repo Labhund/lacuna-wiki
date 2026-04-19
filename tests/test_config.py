@@ -65,3 +65,40 @@ def test_write_default_config_does_not_overwrite(vault):
     write_default_config(vault)
     config = load_config(vault)
     assert config["embed_url"] == "http://custom:9999"
+
+
+def test_load_config_worker_defaults(vault):
+    config = load_config(vault)
+    assert config["sync_workers"] == 4
+    assert config["embed_concurrency"] == 4
+    assert config["reader_pool_size"] == 3
+
+
+def test_load_config_worker_from_file(vault):
+    (vault / CONFIG_FILE).write_text(
+        "[worker]\nsync_workers = 8\nembed_concurrency = 6\nreader_pool_size = 5\n"
+    )
+    config = load_config(vault)
+    assert config["sync_workers"] == 8
+    assert config["embed_concurrency"] == 6
+    assert config["reader_pool_size"] == 5
+
+
+def test_load_config_worker_env_overrides(vault, monkeypatch):
+    monkeypatch.setenv("LACUNA_SYNC_WORKERS", "16")
+    monkeypatch.setenv("LACUNA_EMBED_CONCURRENCY", "8")
+    monkeypatch.setenv("LACUNA_READER_POOL_SIZE", "6")
+    config = load_config(vault)
+    assert config["sync_workers"] == 16
+    assert config["embed_concurrency"] == 8
+    assert config["reader_pool_size"] == 6
+
+
+def test_write_default_config_includes_worker_section(vault):
+    import tomllib
+    write_default_config(vault)
+    data = tomllib.loads((vault / CONFIG_FILE).read_text())
+    assert "worker" in data
+    assert data["worker"]["sync_workers"] == 4
+    assert data["worker"]["embed_concurrency"] == 4
+    assert data["worker"]["reader_pool_size"] == 3

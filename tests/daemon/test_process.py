@@ -41,3 +41,28 @@ def test_is_running_true_for_own_pid():
 
 def test_is_running_false_for_nonexistent_pid():
     assert is_running(99999999) is False
+
+
+def test_close_all_for_pause_releases_file_lock(tmp_path):
+    """After _close_all_for_pause, an external connection can open the DB."""
+    import duckdb
+    from lacuna_wiki.daemon.connections import ConnectionPool
+    from lacuna_wiki.daemon.process import _close_all_for_pause
+    from lacuna_wiki.db.connection import get_connection
+    from lacuna_wiki.db.schema import init_db
+
+    db = tmp_path / "test.db"
+    setup = duckdb.connect(str(db))
+    init_db(setup)
+    setup.close()
+
+    write_conn = get_connection(db)
+    reader_pool = ConnectionPool(db, size=2)
+    reader_pool.open()
+
+    _close_all_for_pause(write_conn, reader_pool)
+
+    # After full close, another connection must be able to open the DB
+    ext_conn = duckdb.connect(str(db))
+    assert ext_conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0] == 0
+    ext_conn.close()

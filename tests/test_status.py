@@ -7,6 +7,13 @@ from lacuna_wiki.db.schema import init_db
 from lacuna_wiki.vault import db_path, state_dir_for
 
 
+@pytest.fixture(autouse=True)
+def no_daemon(tmp_path, monkeypatch):
+    """Redirect PID file to a non-existent path so tests run without daemon routing."""
+    import lacuna_wiki.daemon.process as proc_mod
+    monkeypatch.setattr(proc_mod, "_PID_FILE", tmp_path / "nonexistent.pid")
+
+
 @pytest.fixture
 def vault(tmp_path):
     """A minimal vault: wiki/ raw/ and an initialised DB."""
@@ -97,3 +104,35 @@ def test_status_sweep_backlog_counts_unswept_pages(vault, monkeypatch):
     result = CliRunner().invoke(status)
     assert result.exit_code == 0, result.output
     assert "sweep backlog" in result.output
+
+
+def test_status_routes_through_api_when_daemon_running(vault, monkeypatch):
+    """When PID file points to running process, status hits HTTP API."""
+    import io, json, os
+    from lacuna_wiki.daemon import process as proc_mod
+
+    fake_pid_file = vault / "daemon.pid"
+    fake_pid_file.write_text(str(os.getpid()))
+    monkeypatch.setattr(proc_mod, "_PID_FILE", fake_pid_file)
+
+    api_hit = []
+
+    def fake_urlopen(url, timeout=None):
+        api_hit.append(str(url))
+        data = json.dumps({
+            "tables": {t: 0 for t in ["pages", "sections", "sources", "claims",
+                                       "claim_sources", "source_chunks", "links"]},
+            "sweep": {"research gaps": 0, "ghost pages": 0, "sweep backlog": 0,
+                      "synthesis queue": 0, "synthesised pages": 0},
+        }).encode()
+        resp = io.BytesIO(data)
+        resp.read = resp.read
+        return resp
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.chdir(vault)
+
+    result = CliRunner().invoke(status)
+    assert result.exit_code == 0, result.output
+    assert any("/status" in u for u in api_hit), f"Expected /status API call, got: {api_hit}"

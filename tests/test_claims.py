@@ -76,3 +76,43 @@ def test_list_claims_result_has_expected_keys(conn):
     assert "text" in r
     assert "source_slug" in r
     assert "published_date" in r
+
+
+def test_claims_routes_through_api_when_daemon_running(tmp_path, monkeypatch):
+    """When daemon is running, claims routes through HTTP API."""
+    import io, json, os
+    from click.testing import CliRunner
+    from lacuna_wiki.cli.claims import claims_command
+    from lacuna_wiki.daemon import process as proc_mod
+    from lacuna_wiki.db.schema import init_db
+    from lacuna_wiki.vault import db_path, state_dir_for
+
+    vault = tmp_path / "vault"
+    (vault / "wiki").mkdir(parents=True)
+    (vault / "raw").mkdir()
+    state = state_dir_for(vault)
+    state.mkdir(parents=True, exist_ok=True)
+    c = __import__("duckdb").connect(str(db_path(vault)))
+    init_db(c)
+    c.close()
+
+    fake_pid_file = vault / "daemon.pid"
+    fake_pid_file.write_text(str(os.getpid()))
+    monkeypatch.setattr(proc_mod, "_PID_FILE", fake_pid_file)
+
+    api_hit = []
+
+    def fake_urlopen(url, timeout=None):
+        api_hit.append(str(url))
+        data = json.dumps({"claims": []}).encode()
+        resp = io.BytesIO(data)
+        resp.read = resp.read
+        return resp
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.chdir(vault)
+
+    result = CliRunner().invoke(claims_command, ["--mode", "virgin"])
+    assert result.exit_code == 0, result.output
+    assert any("/claims" in u for u in api_hit), f"Expected /claims API call, got: {api_hit}"
