@@ -87,7 +87,7 @@ def dispatch_wiki(
         slug = str(link_audit)
         if mark_swept:
             return do_mark_swept(conn, slug, cluster=cluster, dim=dim)
-        return page_audit(conn, slug, embed_fn, dim=dim)
+        return page_audit(conn, slug, embed_fn, dim=dim, vault_root=vault_root)
 
     # Normal wiki modes
     provided = sum([q is not None, page is not None, pages is not None])
@@ -117,9 +117,10 @@ def make_wiki_tool(
 ) -> None:
     """Register the wiki tool on mcp_app.
 
-    Pass a pre-opened DuckDBPyConnection (daemon mode — shared within one
-    process) or a Path to the database file (stdio mode — ephemeral per-call
-    connections so the write lock is never held between requests).
+    Pass a ConnectionPool (daemon mode — per-call acquire/release so pool
+    close/reopen during initial_sync or SIGUSR1 pause never breaks in-flight
+    requests), a Path (stdio mode — ephemeral per-call connections), or a
+    pre-opened DuckDBPyConnection (legacy/test — shared, not pool-managed).
     """
     from lacuna_wiki.db.connection import get_connection
 
@@ -159,8 +160,19 @@ def make_wiki_tool(
         Synthesise: provide `synthesise=True` for cluster queue. `synthesise=N` for
         cluster detail. `synthesise=N` with `commit={"slug": "..."}` to mark complete.
         """
-        if isinstance(conn_or_path, Path):
-            # Read-write connection — mark_swept/commit writes to DB
+        # Detect ConnectionPool by duck-typing (avoids circular import)
+        if hasattr(conn_or_path, "acquire") and hasattr(conn_or_path, "release"):
+            conn = conn_or_path.acquire()
+            try:
+                return dispatch_wiki(conn, embed_fn, q=q, scope=scope,
+                                     page=page, section=section, pages=pages,
+                                     link_audit=link_audit, sweep=sweep,
+                                     mark_swept=mark_swept, cluster=cluster,
+                                     synthesise=synthesise, commit=commit,
+                                     limit=limit, dim=dim, vault_root=vault_root)
+            finally:
+                conn_or_path.release(conn)
+        elif isinstance(conn_or_path, Path):
             conn = get_connection(conn_or_path, readonly=False)
             try:
                 return dispatch_wiki(conn, embed_fn, q=q, scope=scope,

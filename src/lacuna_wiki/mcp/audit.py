@@ -287,15 +287,18 @@ def page_audit(
     slug: str,
     embed_fn: EmbedFn,
     dim: int = 768,
+    vault_root: "Path | None" = None,
 ) -> str:
-    """Return formatted single-page audit: unlinked candidates + synthesis candidates."""
+    """Return formatted single-page audit: unlinked candidates + synthesis candidates + page body."""
+    from pathlib import Path
+
     row = conn.execute(
-        "SELECT id, title FROM pages WHERE slug=?", [slug]
+        "SELECT id, title, path FROM pages WHERE slug=?", [slug]
     ).fetchone()
     if row is None:
         return f"Page '{slug}' not found."
 
-    page_id, title = row
+    page_id, title, rel_path = row
     body = _body_text(conn, page_id)
 
     # Unlinked candidates with section locations
@@ -305,6 +308,12 @@ def page_audit(
     candidates = _synthesis_candidates(conn, slug, dim)
 
     lines = [f"page audit: {slug} — \"{title or slug}\"", ""]
+
+    # Include file path so the agent can edit without a second wiki call
+    if rel_path:
+        abs_path = (Path(vault_root) / rel_path) if vault_root else Path(rel_path)
+        lines.append(f"file: {abs_path}")
+        lines.append("")
 
     lines.append(f"unlinked candidates ({len(unlinked)}):")
     if unlinked:
@@ -323,6 +332,17 @@ def page_audit(
             )
     else:
         lines.append("  (none above threshold)")
+
+    # Include the page body so the agent can edit without a second wiki(page=) call
+    file_content: str | None = None
+    if vault_root and rel_path:
+        full_path = Path(vault_root) / rel_path
+        if full_path.exists():
+            file_content = full_path.read_text(encoding="utf-8")
+
+    lines.append("")
+    lines.append("--- page body ---")
+    lines.append(file_content if file_content is not None else body)
 
     return "\n".join(lines)
 

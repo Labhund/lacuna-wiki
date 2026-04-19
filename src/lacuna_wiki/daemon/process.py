@@ -235,9 +235,9 @@ def run_daemon(vault_root: Path) -> None:
     )
     watchdog_thread.start()
 
-    # MCP server uses a reader pool connection (SELECT-only)
-    read_conn = reader_pool.acquire()
-    make_wiki_tool(read_conn, embed_fn)
+    # MCP server acquires/releases from reader pool per-call, so pool
+    # close/reopen during initial_sync or SIGUSR1 pause never strands it.
+    make_wiki_tool(reader_pool, embed_fn, vault_root=vault_root)
 
     try:
         mcp_app.settings.port = mcp_port
