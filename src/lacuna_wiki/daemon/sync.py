@@ -195,11 +195,16 @@ def _write_frontmatter_back(
     created_str = _to_date(row[0])
     updated_str = _to_date(row[1])
     current_text = full_path.read_text(encoding="utf-8")
+    _, current_body = parse_frontmatter(current_text)
+    # If the body on disk has changed since sync_page started (e.g. the agent
+    # wrote new content while we were processing the old version), skip the
+    # write-back.  The watchdog will fire for the new write and sync_page will
+    # run again with the correct content — preventing the file from being
+    # truncated back to just the stale frontmatter.
+    if current_body != body:
+        return
     extras = extract_extra_frontmatter(current_text)
     canonical_fm = format_frontmatter(tags, created_str, updated_str, extras=extras)
-
-    # Reconstruct what the file should look like
-    # body may or may not start with a blank line — preserve it
     canonical_text = canonical_fm + body
     if canonical_text != current_text:
         full_path.write_text(canonical_text, encoding="utf-8")
