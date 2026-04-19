@@ -227,6 +227,7 @@ def run_daemon(vault_root: Path) -> None:
     make_wiki_tool(read_conn, embed_fn)
 
     try:
+        mcp_app.settings.port = mcp_port
         mcp_app.run(transport="sse")
     finally:
         api_server.shutdown()
