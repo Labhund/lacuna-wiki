@@ -88,7 +88,8 @@ def _run_sweep_via_daemon(vault_root: Path, batch: int | None, force: bool) -> N
         running = state.get("running", True)
 
         if total > 0:
-            console.print(f"\r[{done}/{total}] pages pre-computed", end="")
+            sys.stdout.write(f"\r[{done}/{total}] pages pre-computed  ")
+            sys.stdout.flush()
 
         if not running and total > 0 and done >= total:
             console.print(f"\n[green]✓[/green] Sweep complete. {done} pages pre-computed.")
