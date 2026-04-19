@@ -128,7 +128,7 @@ def _synthesis_tables(dim: int = 768) -> list[str]:
 # Schema versioning and migrations
 # ---------------------------------------------------------------------------
 
-_CURRENT_VERSION = 5
+_CURRENT_VERSION = 7
 
 
 def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -213,6 +213,28 @@ def _migrate_v5_unlinked_candidates(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("UPDATE schema_version SET version=5")
 
 
+def _migrate_v6_semantic_hash(conn: duckdb.DuckDBPyConnection) -> None:
+    """v6: semantic_hash and swept_semantic_hash on pages for wikilink-stable sweep detection."""
+    try:
+        conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS semantic_hash TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS swept_semantic_hash TEXT")
+    except Exception:
+        pass
+    conn.execute("UPDATE schema_version SET version=6")
+
+
+def _migrate_v7_sweep_lease(conn: duckdb.DuckDBPyConnection) -> None:
+    """v7: sweep_lease_expires on pages for parallel agent batch claiming."""
+    try:
+        conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS sweep_lease_expires TIMESTAMP")
+    except Exception:
+        pass
+    conn.execute("UPDATE schema_version SET version=7")
+
+
 def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
     """Create sequences and tables. Safe to call on an existing DB."""
     for stmt in _SEQUENCES:
@@ -230,3 +252,7 @@ def init_db(conn: duckdb.DuckDBPyConnection, dim: int = 768) -> None:
         _migrate_v4_synthesise(conn)
     if version < 5:
         _migrate_v5_unlinked_candidates(conn)
+    if version < 6:
+        _migrate_v6_semantic_hash(conn)
+    if version < 7:
+        _migrate_v7_sweep_lease(conn)

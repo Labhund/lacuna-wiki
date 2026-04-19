@@ -23,12 +23,15 @@ _STUB_MIN_SECTIONS = 2
 # vault_audit
 # ---------------------------------------------------------------------------
 
-def vault_audit(conn: duckdb.DuckDBPyConnection, limit: int | None = None) -> str:
+def vault_audit(conn: duckdb.DuckDBPyConnection, limit: int | None = None, claim: bool = False) -> str:
     """Return formatted vault audit: research gaps, ghost pages, sweep queue.
 
     When limit is set, ghost pages are shown as a count only and the sweep
     queue is truncated to the top `limit` entries — suitable for incremental
     tick-off workflows on large vaults.
+
+    When claim=True and limit is not None, atomically sets sweep_lease_expires
+    on the returned pages so a second parallel agent gets a different batch.
     """
     gaps = _research_gaps(conn)
     ghosts = _ghost_pages(conn)
@@ -61,6 +64,15 @@ def vault_audit(conn: duckdb.DuckDBPyConnection, limit: int | None = None) -> st
         lines.append("")
         shown = queue
         lines.append(f"sweep queue ({len(queue)} pages, ranked by link gap):")
+
+    if claim and limit is not None and shown:
+        from datetime import datetime, timezone, timedelta
+        lease_until = datetime.now(tz=timezone.utc) + timedelta(minutes=10)
+        for slug, *_ in shown:
+            conn.execute(
+                "UPDATE pages SET sweep_lease_expires=? WHERE slug=?",
+                [lease_until, slug],
+            )
 
     for i, (slug, title, link_count, word_count, unlinked) in enumerate(shown, 1):
         unlinked_str = ", ".join(f"{s} (×{n})" for s, n in unlinked[:3])
@@ -144,8 +156,9 @@ def _sweep_queue(conn: duckdb.DuckDBPyConnection) -> list[tuple]:
                    (SELECT COUNT(*) FROM links l WHERE l.source_page_id = p.id) AS link_count,
                    COALESCE((SELECT SUM(s.token_count) FROM sections s WHERE s.page_id = p.id), 0) AS token_sum
             FROM pages p
-            WHERE (p.last_swept IS NULL OR p.last_modified > p.last_swept)
+            WHERE (p.swept_semantic_hash IS NULL OR p.semantic_hash != p.swept_semantic_hash)
               AND p.synthesised_into IS NULL
+              AND (p.sweep_lease_expires IS NULL OR p.sweep_lease_expires < now())
         ) t
         ORDER BY
             CASE WHEN token_sum = 0 THEN 0 ELSE link_count::FLOAT / token_sum END ASC,
@@ -485,21 +498,21 @@ def mark_swept(
     cluster: dict | None = None,
     dim: int = 768,
 ) -> str:
-    """Set last_swept = now() on the page. If cluster is provided, create or extend
-    a synthesis cluster.
+    """Set last_swept = last_modified on the page; also records swept_semantic_hash and clears
+    sweep_lease_expires. If cluster is provided, create or extend a synthesis cluster.
 
     cluster dict: {"members": [slugs], "label": str, "rationale": str}
     """
-    row = conn.execute("SELECT id, last_modified FROM pages WHERE slug=?", [slug]).fetchone()
+    row = conn.execute(
+        "SELECT id, last_modified, semantic_hash FROM pages WHERE slug=?", [slug]
+    ).fetchone()
     if row is None:
         return f"Page '{slug}' not found — cannot mark swept."
-    page_id, last_modified = row
+    page_id, last_modified, semantic_hash = row
 
-    # Use last_modified not now() — prevents re-queueing after daemon's
-    # subsequent frontmatter writeback (which doesn't change the body hash).
     conn.execute(
-        "UPDATE pages SET last_swept=? WHERE id=?",
-        [last_modified, page_id],
+        "UPDATE pages SET last_swept=?, swept_semantic_hash=?, sweep_lease_expires=NULL WHERE id=?",
+        [last_modified, semantic_hash, page_id],
     )
 
     if cluster:

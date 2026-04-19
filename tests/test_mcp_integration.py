@@ -197,3 +197,5 @@ def test_synthesise_and_link_audit_mutual_exclusion(vault):
     _, conn = vault
     result = dispatch_wiki(conn, fake_embed, synthesise=True, link_audit=True)
     assert "error" in result.lower() or "mutually exclusive" in result.lower()
+
+

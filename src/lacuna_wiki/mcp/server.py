@@ -81,7 +81,8 @@ def dispatch_wiki(
         if link_audit is True:
             if mark_swept:
                 return "Error: mark_swept requires a page slug. Use sweep='slug' or link_audit='slug', not link_audit=True."
-            return vault_audit(conn, limit=limit)
+            claim = limit is not None
+            return vault_audit(conn, limit=limit, claim=claim)
 
         # link_audit is a slug string
         slug = str(link_audit)

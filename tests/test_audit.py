@@ -427,6 +427,66 @@ def test_mark_swept_uses_last_modified_not_now(tmp_path):
     )
 
 
+def test_semantic_hash_unchanged_after_wikilink_added(vault):
+    """Adding [[wikilink]] must not change semantic_hash."""
+    from lacuna_wiki.daemon.sync import _semantic_hash
+    body_before = "# page\n\n## Intro\n\nMentions beta here.\n"
+    body_after  = "# page\n\n## Intro\n\nMentions [[beta]] here.\n"
+    assert _semantic_hash(body_before) == _semantic_hash(body_after)
+
+
+def test_semantic_hash_changes_on_real_edit(vault):
+    """A real content change must produce a different semantic_hash."""
+    from lacuna_wiki.daemon.sync import _semantic_hash
+    body_before = "# page\n\n## Intro\n\nOriginal content.\n"
+    body_after  = "# page\n\n## Intro\n\nChanged content.\n"
+    assert _semantic_hash(body_before) != _semantic_hash(body_after)
+
+
+def test_sweep_queue_stable_after_wikilink_added(vault):
+    """A page marked swept must not re-enter sweep queue when only a wikilink is added."""
+    from lacuna_wiki.mcp.audit import mark_swept, vault_audit
+    vault_root, conn = vault
+
+    # Build a non-stub page: ≥100 words, ≥2 sections.
+    # The body already contains the word "beta" so that replacing it with [[beta]]
+    # is a pure wikilink-only edit (semantic_hash strips [[X]] to X, so hash is unchanged).
+    filler = "Word " * 58 + "beta something "  # 60 words per section, includes "beta"
+    alpha_body = (
+        "# alpha\n\n"
+        f"## Introduction\n\n{filler}\n\n"
+        f"## Background\n\n{filler}\n"
+    )
+    beta_body = (
+        "# beta\n\n"
+        f"## Introduction\n\n{'Word ' * 60}\n\n"
+        f"## Background\n\n{'Word ' * 60}\n"
+    )
+    write_and_sync(vault_root, conn, "alpha.md", alpha_body)
+    write_and_sync(vault_root, conn, "beta.md", beta_body)
+
+    # Confirm alpha is in the sweep queue before marking swept
+    audit_before = vault_audit(conn)
+    assert "alpha" in audit_before, "alpha should be in sweep queue before being swept"
+
+    # Mark alpha swept
+    mark_swept(conn, "alpha")
+
+    # Simulate sweep adding a wikilink — replace bare "beta" with "[[beta]]".
+    # semantic_hash strips [[beta]] back to "beta", so hash must be unchanged.
+    alpha_linked = alpha_body.replace("beta something", "[[beta]] something")
+    write_and_sync(vault_root, conn, "alpha.md", alpha_linked)
+
+    # alpha must NOT re-appear in the sweep queue
+    audit_after = vault_audit(conn)
+    queue_section = False
+    for line in audit_after.split("\n"):
+        if "sweep queue" in line:
+            queue_section = True
+        if queue_section and "alpha" in line:
+            assert False, f"alpha unexpectedly in sweep queue after wikilink-only edit:\n{audit_after}"
+
+
 def test_vault_audit_reads_from_cache_when_available(tmp_path):
     from lacuna_wiki.mcp.audit import vault_audit, precompute_unlinked_candidates
     vault_root = tmp_path / "vault"
@@ -445,3 +505,96 @@ def test_vault_audit_reads_from_cache_when_available(tmp_path):
     result = vault_audit(conn)
     assert isinstance(result, str)
     assert "p2" in result
+
+
+# ---------------------------------------------------------------------------
+# Lease behaviour tests
+# ---------------------------------------------------------------------------
+
+def test_leased_pages_excluded_from_second_audit(vault):
+    """Pages returned by first vault_audit(limit=2, claim=True) must not appear in the second agent's batch."""
+    from lacuna_wiki.mcp.audit import vault_audit
+    vault_root, conn = vault
+
+    filler = "Word " * 60
+    for i in range(4):
+        body = (
+            f"# page-{i}\n\n"
+            f"## Introduction\n\n{filler}\n\n"
+            f"## Background\n\n{filler}\n"
+        )
+        write_and_sync(vault_root, conn, f"page-{i}.md", body)
+
+    result1 = vault_audit(conn, limit=2, claim=True)
+    result2 = vault_audit(conn, limit=2, claim=True)
+
+    def slugs_from_result(text):
+        slugs = set()
+        in_queue = False
+        for line in text.split("\n"):
+            if "sweep queue" in line:
+                in_queue = True
+            if in_queue and line.strip() and line.strip()[0].isdigit():
+                # Format: "  1. slug — ..."
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    slugs.add(parts[1].rstrip("—").rstrip("."))
+        return slugs
+
+    slugs1 = slugs_from_result(result1)
+    slugs2 = slugs_from_result(result2)
+
+    assert slugs1, "First audit returned no slugs"
+    assert slugs2, "Second audit returned no slugs"
+    assert slugs1.isdisjoint(slugs2), f"Agents got overlapping pages: {slugs1 & slugs2}"
+
+
+def test_expired_lease_returns_page_to_queue(vault):
+    """A page with an expired lease must re-appear in vault_audit results."""
+    from lacuna_wiki.mcp.audit import vault_audit
+    from datetime import datetime, timezone, timedelta
+    vault_root, conn = vault
+
+    filler = "Word " * 60
+    body = (
+        "# alpha\n\n"
+        f"## Introduction\n\n{filler}\n\n"
+        f"## Background\n\n{filler}\n"
+    )
+    write_and_sync(vault_root, conn, "alpha.md", body)
+
+    # Set an already-expired lease on alpha
+    conn.execute(
+        "UPDATE pages SET sweep_lease_expires=? WHERE slug='alpha'",
+        [datetime.now(tz=timezone.utc) - timedelta(minutes=1)],
+    )
+
+    result = vault_audit(conn, limit=10)
+    assert "alpha" in result, "alpha with expired lease should appear in audit"
+
+
+def test_mark_swept_clears_lease(vault):
+    """mark_swept must clear sweep_lease_expires so the page is no longer locked."""
+    from lacuna_wiki.mcp.audit import vault_audit, mark_swept
+    vault_root, conn = vault
+
+    filler = "Word " * 60
+    body = (
+        "# alpha\n\n"
+        f"## Introduction\n\n{filler}\n\n"
+        f"## Background\n\n{filler}\n"
+    )
+    write_and_sync(vault_root, conn, "alpha.md", body)
+
+    # Claim alpha via vault_audit
+    vault_audit(conn, limit=1, claim=True)
+    row = conn.execute(
+        "SELECT sweep_lease_expires FROM pages WHERE slug='alpha'"
+    ).fetchone()
+    assert row[0] is not None, "Lease should be set after vault_audit(claim=True)"
+
+    mark_swept(conn, "alpha")
+    row = conn.execute(
+        "SELECT sweep_lease_expires FROM pages WHERE slug='alpha'"
+    ).fetchone()
+    assert row[0] is None, "Lease should be cleared after mark_swept"

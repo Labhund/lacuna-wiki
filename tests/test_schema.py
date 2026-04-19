@@ -180,3 +180,60 @@ def test_schema_v5_migration_from_v4(tmp_path):
     ).fetchall()}
     assert "unlinked_candidates" in tables
     conn.close()
+
+
+def test_schema_v6_adds_semantic_and_swept_hash(tmp_path):
+    import duckdb
+    from lacuna_wiki.db.schema import init_db
+    conn = duckdb.connect(str(tmp_path / "wiki.db"))
+    init_db(conn)
+    cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='pages'"
+    ).fetchall()}
+    assert "semantic_hash" in cols
+    assert "swept_semantic_hash" in cols
+
+
+def test_schema_v7_adds_sweep_lease_expires(tmp_path):
+    import duckdb
+    from lacuna_wiki.db.schema import init_db
+    conn = duckdb.connect(str(tmp_path / "wiki.db"))
+    init_db(conn)
+    cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='pages'"
+    ).fetchall()}
+    assert "sweep_lease_expires" in cols
+
+
+def test_schema_v6_v7_migration_from_v5(tmp_path):
+    """Simulate upgrading a v5 database — columns must appear after init_db."""
+    import duckdb
+    from lacuna_wiki.db.schema import init_db, _set_schema_version
+    conn = duckdb.connect(str(tmp_path / "v5.db"))
+    # Build a minimal v5-era pages table without FK children so we can drop columns freely
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS pages_id_seq START 1")
+    conn.execute("""CREATE TABLE pages (
+        id            INTEGER DEFAULT nextval('pages_id_seq') PRIMARY KEY,
+        slug          TEXT UNIQUE NOT NULL,
+        path          TEXT NOT NULL,
+        title         TEXT,
+        cluster       TEXT,
+        tags          TEXT,
+        body_hash     TEXT,
+        created_at    TIMESTAMP,
+        last_modified TIMESTAMP,
+        last_swept    TIMESTAMP,
+        synthesised_into TEXT
+    )""")
+    _set_schema_version(conn, 5)
+    conn.close()
+
+    conn = duckdb.connect(str(tmp_path / "v5.db"))
+    init_db(conn)
+    cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='pages'"
+    ).fetchall()}
+    assert "semantic_hash" in cols
+    assert "swept_semantic_hash" in cols
+    assert "sweep_lease_expires" in cols
+    conn.close()
