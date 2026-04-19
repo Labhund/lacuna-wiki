@@ -486,8 +486,8 @@ def mark_swept(
     cluster: dict | None = None,
     dim: int = 768,
 ) -> str:
-    """Set last_swept = last_modified and swept_semantic_hash = semantic_hash on the page.
-    If cluster is provided, create or extend a synthesis cluster.
+    """Set last_swept = now() on the page; also records swept_semantic_hash and clears
+    sweep_lease_expires. If cluster is provided, create or extend a synthesis cluster.
 
     cluster dict: {"members": [slugs], "label": str, "rationale": str}
     """
