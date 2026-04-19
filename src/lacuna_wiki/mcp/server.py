@@ -24,6 +24,7 @@ def dispatch_wiki(
     section: str | None = None,
     pages: list[str] | None = None,
     link_audit: "bool | str | None" = None,
+    sweep: "str | None" = None,
     mark_swept: bool = False,
     cluster: dict | None = None,
     synthesise: "bool | int | str | None" = None,
@@ -46,6 +47,12 @@ def dispatch_wiki(
     elif isinstance(synthesise, str) and synthesise.isdigit():
         synthesise = int(synthesise)
 
+    # `sweep="slug"` is the preferred per-page alias; fold into link_audit for dispatch
+    if sweep is not None:
+        if link_audit is not None:
+            return "Error: sweep and link_audit are mutually exclusive."
+        link_audit = sweep
+
     # Mutual exclusion guard
     if synthesise is not None and link_audit is not None:
         return "Error: synthesise and link_audit are mutually exclusive."
@@ -64,7 +71,7 @@ def dispatch_wiki(
             return commit_synthesis(conn, cluster_id, commit["slug"], vault_root=vault_root)
         return cluster_detail(conn, cluster_id)
 
-    # link_audit mode
+    # link_audit / sweep mode
     if link_audit is not None:
         from lacuna_wiki.mcp.audit import (
             vault_audit,
@@ -73,7 +80,7 @@ def dispatch_wiki(
         )
         if link_audit is True:
             if mark_swept:
-                return "Error: mark_swept requires link_audit to be a page slug, not True."
+                return "Error: mark_swept requires a page slug. Use sweep='slug' or link_audit='slug', not link_audit=True."
             return vault_audit(conn, limit=limit)
 
         # link_audit is a slug string
@@ -124,6 +131,7 @@ def make_wiki_tool(
         section: str | None = None,
         pages: list[str] | None = None,
         link_audit: "bool | str | None" = None,
+        sweep: "str | None" = None,
         mark_swept: bool = False,
         cluster: dict | None = None,
         synthesise: "bool | int | str | None" = None,
@@ -139,18 +147,14 @@ def make_wiki_tool(
 
         Multi-read: provide `pages` (list of slugs).
 
-        Audit: provide `link_audit=True` for full vault audit (research gaps, ghost
-        pages, sweep queue). Provide `link_audit="slug"` for single-page audit
-        (unlinked candidates + synthesis candidates).
+        Vault audit: provide `link_audit=True`. Use `limit=N` to get only the top N
+        sweep queue entries with summary counts for gaps/ghosts (recommended for large
+        vaults — call again after each batch).
 
-        Use `limit=N` with `link_audit=True` to get only the top N pages from the
-        sweep queue with summary counts for gaps/ghosts — much smaller output for
-        incremental tick-off workflows on large vaults. Call again after marking
-        pages swept to get the next batch.
-
-        Sweep commit: provide `link_audit="slug"` and `mark_swept=True` to mark the
-        page swept. Optionally include `cluster={"members": [...], "label": "...",
-        "rationale": "..."}` to create or extend a synthesis cluster.
+        Per-page sweep: provide `sweep="page-slug"` to audit a single page (unlinked
+        candidates + synthesis candidates). Add `mark_swept=True` to mark it swept.
+        Optionally include `cluster={"members": [...], "label": "...", "rationale":
+        "..."}` to create or extend a synthesis cluster.
 
         Synthesise: provide `synthesise=True` for cluster queue. `synthesise=N` for
         cluster detail. `synthesise=N` with `commit={"slug": "..."}` to mark complete.
@@ -161,16 +165,16 @@ def make_wiki_tool(
             try:
                 return dispatch_wiki(conn, embed_fn, q=q, scope=scope,
                                      page=page, section=section, pages=pages,
-                                     link_audit=link_audit, mark_swept=mark_swept,
-                                     cluster=cluster, synthesise=synthesise,
-                                     commit=commit, limit=limit, dim=dim,
-                                     vault_root=vault_root)
+                                     link_audit=link_audit, sweep=sweep,
+                                     mark_swept=mark_swept, cluster=cluster,
+                                     synthesise=synthesise, commit=commit,
+                                     limit=limit, dim=dim, vault_root=vault_root)
             finally:
                 conn.close()
         else:
             return dispatch_wiki(conn_or_path, embed_fn, q=q, scope=scope,
                                  page=page, section=section, pages=pages,
-                                 link_audit=link_audit, mark_swept=mark_swept,
-                                 cluster=cluster, synthesise=synthesise,
-                                 commit=commit, limit=limit, dim=dim,
-                                 vault_root=vault_root)
+                                 link_audit=link_audit, sweep=sweep,
+                                 mark_swept=mark_swept, cluster=cluster,
+                                 synthesise=synthesise, commit=commit,
+                                 limit=limit, dim=dim, vault_root=vault_root)

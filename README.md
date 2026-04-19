@@ -45,10 +45,10 @@ wiki(pages=["sdpa", "flash-attn"])      # pull multiple pages in one shot
 wiki(q="...", scope="sources")          # search raw source chunks directly
 
 # sweep — audit and queue
-wiki(link_audit=True)                   # vault audit: research gaps, ghost pages, sweep queue
-wiki(link_audit=True, limit=10)         # compact audit: counts only + top N sweep items (scalable)
-wiki(link_audit="slug")                 # single-page audit + top synthesis candidates
-wiki(link_audit="slug", mark_swept=True, cluster={...})  # mark page swept; optionally queue a cluster
+wiki(link_audit=True)                              # vault audit: research gaps, ghost pages, sweep queue
+wiki(link_audit=True, limit=10)                    # compact audit: counts only + top N sweep items
+wiki(sweep="slug")                                 # single-page audit + top synthesis candidates
+wiki(sweep="slug", mark_swept=True, cluster={...}) # mark page swept; optionally queue a cluster
 
 # synthesise — read and write synthesis clusters
 wiki(synthesise=True)                   # list pending synthesis clusters

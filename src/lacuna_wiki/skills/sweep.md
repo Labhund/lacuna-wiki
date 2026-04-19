@@ -21,23 +21,23 @@ All wiki operations go through the `wiki` MCP tool.
 
 **Vault audit:**
 ```
-wiki(link_audit=True)
+wiki(link_audit=True, limit=10)
 ```
 
 **Single-page audit:**
 ```
-wiki(link_audit="slug")
+wiki(sweep="page-slug")
 ```
 
 **Mark page swept (no cluster):**
 ```
-wiki(link_audit="slug", mark_swept=True)
+wiki(sweep="page-slug", mark_swept=True)
 ```
 
 **Mark page swept with synthesis cluster:**
 ```
 wiki(
-    link_audit="slug",
+    sweep="page-slug",
     mark_swept=True,
     cluster={
         "members": ["slug-a", "slug-b"],
@@ -92,7 +92,7 @@ State out loud before touching anything:
 > Reading the page now — will declare cluster judgment after."
 
 ```
-wiki(link_audit="slug")
+wiki(sweep="slug")
 wiki(page="slug")
 ```
 
@@ -123,14 +123,14 @@ Edit the file (using your file-write tool) to insert the wikilink at the first m
 If no synthesis cluster was declared:
 
 ```
-wiki(link_audit="slug", mark_swept=True)
+wiki(sweep="slug", mark_swept=True)
 ```
 
 If the agent declared a cluster:
 
 ```
 wiki(
-    link_audit="slug",
+    sweep="slug",
     mark_swept=True,
     cluster={"members": ["slug-a", "slug-b"], "label": "...", "rationale": "..."}
 )
