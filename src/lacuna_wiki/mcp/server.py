@@ -162,7 +162,10 @@ def make_wiki_tool(
         """
         # Detect ConnectionPool by duck-typing (avoids circular import)
         if hasattr(conn_or_path, "acquire") and hasattr(conn_or_path, "release"):
-            conn = conn_or_path.acquire()
+            try:
+                conn = conn_or_path.acquire(timeout=30)
+            except TimeoutError:
+                return "Daemon is still initializing (initial sync in progress). Please retry in a moment."
             try:
                 return dispatch_wiki(conn, embed_fn, q=q, scope=scope,
                                      page=page, section=section, pages=pages,

@@ -33,9 +33,13 @@ class ConnectionPool:
                 self._available.append(conn)
             self._sem.release()
 
-    def acquire(self) -> duckdb.DuckDBPyConnection:
-        """Acquire a connection. Blocks until one is available."""
-        self._sem.acquire()
+    def acquire(self, timeout: float | None = None) -> duckdb.DuckDBPyConnection:
+        """Acquire a connection. Blocks until one is available or timeout expires.
+
+        Raises TimeoutError if timeout seconds pass with no available connection.
+        """
+        if not self._sem.acquire(timeout=timeout):
+            raise TimeoutError("No pool connection available — daemon may be initializing")
         with self._lock:
             return self._available.pop()
 
