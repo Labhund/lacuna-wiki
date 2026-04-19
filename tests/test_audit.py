@@ -427,6 +427,22 @@ def test_mark_swept_uses_last_modified_not_now(tmp_path):
     )
 
 
+def test_semantic_hash_unchanged_after_wikilink_added(vault):
+    """Adding [[wikilink]] must not change semantic_hash."""
+    from lacuna_wiki.daemon.sync import _semantic_hash
+    body_before = "# page\n\n## Intro\n\nMentions beta here.\n"
+    body_after  = "# page\n\n## Intro\n\nMentions [[beta]] here.\n"
+    assert _semantic_hash(body_before) == _semantic_hash(body_after)
+
+
+def test_semantic_hash_changes_on_real_edit(vault):
+    """A real content change must produce a different semantic_hash."""
+    from lacuna_wiki.daemon.sync import _semantic_hash
+    body_before = "# page\n\n## Intro\n\nOriginal content.\n"
+    body_after  = "# page\n\n## Intro\n\nChanged content.\n"
+    assert _semantic_hash(body_before) != _semantic_hash(body_after)
+
+
 def test_vault_audit_reads_from_cache_when_available(tmp_path):
     from lacuna_wiki.mcp.audit import vault_audit, precompute_unlinked_candidates
     vault_root = tmp_path / "vault"

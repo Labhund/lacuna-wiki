@@ -21,6 +21,13 @@ _OBSIDIAN_COMMENT_RE = re.compile(r'%%.*?%%', re.DOTALL)
 _SYNTHESISED_INTO_RE = re.compile(
     r'%%\s*synthesised-into:\s*\[\[([^\]]+)\]\]\s*%%', re.IGNORECASE
 )
+_WIKILINK_DISPLAY_RE = re.compile(r'\[\[(?:[^\]|]+\|)?([^\]]+)\]\]')
+
+
+def _semantic_hash(body: str) -> str:
+    body = _strip_obsidian_comments(body)
+    body = _WIKILINK_DISPLAY_RE.sub(r'\1', body)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:24]
 
 
 def _strip_obsidian_comments(text: str) -> str:
@@ -60,6 +67,7 @@ def sync_page(
     text = full_path.read_text(encoding="utf-8")
     tags, body = parse_frontmatter(text)
     bh = _body_hash(body)
+    sh = _semantic_hash(body)
     tags_json = tags_to_db(tags)
 
     existing = conn.execute(
@@ -91,7 +99,7 @@ def sync_page(
 
     conn.begin()
     try:
-        page_id = _upsert_page(conn, slug, str(rel_path), body, tags, bh)
+        page_id = _upsert_page(conn, slug, str(rel_path), body, tags, bh, sh)
         _sync_sections(conn, page_id, body, embed_fn)
         _sync_links(conn, page_id, body)
         _sync_claims(conn, page_id, body, embed_fn)
@@ -148,6 +156,7 @@ def _upsert_page(
     body: str,
     tags: list[str],
     bh: str,
+    sh: str,
 ) -> int:
     title = _extract_title(body)
     cluster = _path_to_cluster(path)
@@ -156,14 +165,14 @@ def _upsert_page(
     if row:
         conn.execute(
             "UPDATE pages SET path=?, title=?, cluster=?, tags=?, body_hash=?,"
-            " last_modified=now() WHERE id=?",
-            [path, title, cluster, tags_json, bh, row[0]],
+            " semantic_hash=?, last_modified=now() WHERE id=?",
+            [path, title, cluster, tags_json, bh, sh, row[0]],
         )
         return row[0]
     conn.execute(
         "INSERT INTO pages (slug, path, title, cluster, tags, body_hash,"
-        " created_at, last_modified) VALUES (?,?,?,?,?,?,now(),now())",
-        [slug, path, title, cluster, tags_json, bh],
+        " semantic_hash, created_at, last_modified) VALUES (?,?,?,?,?,?,?,now(),now())",
+        [slug, path, title, cluster, tags_json, bh, sh],
     )
     return conn.execute("SELECT id FROM pages WHERE slug=?", [slug]).fetchone()[0]
 
