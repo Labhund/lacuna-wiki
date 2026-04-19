@@ -122,6 +122,7 @@ def _rebuild_fts(conn: duckdb.DuckDBPyConnection) -> None:
     log = logging.getLogger(__name__)
     log.info("Rebuilding FTS index on sections...")
     try:
+        conn.execute("CHECKPOINT")  # flush deleted-entry shadows before FTS catalog write
         conn.execute("PRAGMA create_fts_index('sections', 'id', 'content', overwrite=1)")
         conn.commit()
         log.info("FTS index rebuild complete.")
