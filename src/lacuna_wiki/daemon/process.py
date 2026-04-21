@@ -11,6 +11,7 @@ _PID_FILE = _STATE_DIR / "daemon.pid"
 _LOG_FILE = _STATE_DIR / "daemon.log"
 
 _pause_event = threading.Event()
+_sweep_conn_ref = None  # Mutable ref to sweep job's connection for pause protocol
 
 
 def _handle_sigusr1(signum, frame) -> None:
@@ -53,6 +54,14 @@ def _close_all_for_pause(write_conn, reader_pool) -> None:
     must also be closed before the CLI can open its own write connection.
     """
     reader_pool.close()
+    # Close sweep job's ephemeral connection if one exists
+    global _sweep_conn_ref
+    if _sweep_conn_ref is not None:
+        try:
+            _sweep_conn_ref.close()
+        except Exception:
+            pass
+        _sweep_conn_ref = None
     try:
         write_conn.close()
     except Exception:
@@ -187,7 +196,8 @@ def run_daemon(vault_root: Path) -> None:
         from lacuna_wiki.mcp.audit import precompute_unlinked_candidates
         import logging
         log = logging.getLogger(__name__)
-        conn = get_connection(db)
+        global _sweep_conn_ref
+        _sweep_conn_ref = conn = get_connection(db)
         try:
             if force:
                 rows = conn.execute("SELECT id FROM pages").fetchall()
@@ -208,6 +218,7 @@ def run_daemon(vault_root: Path) -> None:
             log.error("Sweep job error: %s", exc)
         finally:
             sweep_state["running"] = False
+            _sweep_conn_ref = None
             conn.close()
 
     def _submit_sweep(batch: int | None = None, force: bool = False) -> None:

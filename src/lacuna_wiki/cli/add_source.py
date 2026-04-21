@@ -136,7 +136,26 @@ def add_source(
                 sys.exit(1)
             time.sleep(0.05)
 
-    conn = get_connection(db)
+    # Open DB connection — may need to retry if daemon is still initialising
+    # and hasn't entered its SIGUSR1 pause-check loop yet.
+    conn = None
+    for attempt in range(20):
+        try:
+            conn = get_connection(db)
+            break
+        except Exception as exc:
+            if "lock" in str(exc).lower() or "conflicting" in str(exc).lower():
+                if time.monotonic() > deadline + 5:
+                    console.print("[red]Daemon did not release DB lock — aborting.[/red]")
+                    sys.exit(1)
+                time.sleep(0.25)
+            else:
+                raise
+
+    if conn is None:
+        console.print("[red]Failed to open database connection.[/red]")
+        sys.exit(1)
+
     init_db(conn, dim=config["embed_dim"])
 
     def _cleanup() -> None:
