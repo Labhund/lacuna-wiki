@@ -26,7 +26,7 @@ _DEFAULTS: dict = {
     "sync_workers": 4,
     "embed_concurrency": 4,
     "reader_pool_size": 2,
-    "memory_limit": "1GB",
+    "memory_limit": "2GB",
 }
 
 
