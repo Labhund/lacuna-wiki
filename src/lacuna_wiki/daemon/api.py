@@ -46,6 +46,7 @@ def _make_handler(
     db_path: Path,
     vault_root: Path,
     embed_fn: Callable,
+    memory_limit: str | None = None,
 ):
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -92,7 +93,7 @@ def _make_handler(
             from lacuna_wiki.db.schema import init_db
             from lacuna_wiki.daemon.watcher import initial_sync
 
-            conn = get_connection(db_path)
+            conn = get_connection(db_path, memory_limit=memory_limit)
             try:
                 init_db(conn)
                 initial_sync(conn, vault_root, embed_fn)
@@ -116,7 +117,7 @@ def _make_handler(
             verdicts = [Verdict(**v) for v in verdicts_raw]
             supersessions = [Supersession(**s) for s in supersessions_raw]
 
-            conn = get_connection(db_path)
+            conn = get_connection(db_path, memory_limit=memory_limit)
             try:
                 write_verdicts(conn, verdicts, supersessions)
             except Exception as exc:
@@ -159,11 +160,12 @@ def start_api_server(
     db_path: Path,
     vault_root: Path,
     embed_fn: Callable,
+    memory_limit: str | None = None,
 ) -> HTTPServer:
     """Start the status HTTP API on a daemon thread. Returns the server."""
     handler = _make_handler(
         reader_pool, sweep_state, submit_sweep,
-        db_path, vault_root, embed_fn,
+        db_path, vault_root, embed_fn, memory_limit,
     )
     try:
         server = HTTPServer(("127.0.0.1", port), handler)

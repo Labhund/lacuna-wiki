@@ -18,9 +18,11 @@ class ConnectionPool:
     use them for full sync_page transactions on disjoint page rows.
     """
 
-    def __init__(self, db_path: Path, size: int) -> None:
+    def __init__(self, db_path: Path, size: int,
+                 memory_limit: str | None = None) -> None:
         self._db_path = db_path
         self._size = size
+        self._memory_limit = memory_limit
         self._available: list[duckdb.DuckDBPyConnection] = []
         self._lock = threading.Lock()
         self._sem = threading.Semaphore(0)
@@ -28,7 +30,7 @@ class ConnectionPool:
     def open(self) -> None:
         """Open all pool connections. Call once at startup."""
         for _ in range(self._size):
-            conn = get_connection(self._db_path)
+            conn = get_connection(self._db_path, memory_limit=self._memory_limit)
             with self._lock:
                 self._available.append(conn)
             self._sem.release()

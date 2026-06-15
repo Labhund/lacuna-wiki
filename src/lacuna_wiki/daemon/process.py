@@ -105,6 +105,7 @@ def run_daemon(vault_root: Path) -> None:
     n_workers = int(config["sync_workers"])
     embed_concurrency = int(config["embed_concurrency"])
     reader_pool_size = int(config["reader_pool_size"])
+    memory_limit = config.get("memory_limit")
 
     db = db_path(vault_root)
 
@@ -114,12 +115,12 @@ def run_daemon(vault_root: Path) -> None:
     _log = _logging.getLogger(__name__)
     wal = Path(str(db) + ".wal")
     try:
-        write_conn = get_connection(db)
+        write_conn = get_connection(db, memory_limit=memory_limit)
     except Exception as _exc:
         if "Failure while replaying WAL" in str(_exc) and wal.exists():
             _log.warning("Corrupt WAL detected — deleting and retrying: %s", wal)
             wal.unlink()
-            write_conn = get_connection(db)
+            write_conn = get_connection(db, memory_limit=memory_limit)
         else:
             raise
 
@@ -127,7 +128,7 @@ def run_daemon(vault_root: Path) -> None:
     init_db(write_conn)
 
     # Reader pool shared by MCP server, status HTTP API, and sweep queries
-    reader_pool = ConnectionPool(db, size=reader_pool_size)
+    reader_pool = ConnectionPool(db, size=reader_pool_size, memory_limit=memory_limit)
     reader_pool.open()
 
     # Status HTTP API on mcp_port+1
@@ -177,6 +178,7 @@ def run_daemon(vault_root: Path) -> None:
         db_path=db,
         vault_root=vault_root,
         embed_fn=embed_fn,
+        memory_limit=memory_limit,
     )
 
     watchdog_thread = threading.Thread(

@@ -25,7 +25,8 @@ _DEFAULTS: dict = {
     "mcp_port": 7654,
     "sync_workers": 4,
     "embed_concurrency": 4,
-    "reader_pool_size": 3,
+    "reader_pool_size": 2,
+    "memory_limit": "1GB",
 }
 
 
@@ -59,6 +60,8 @@ def load_config(vault_root: Path) -> dict:
             config["embed_concurrency"] = int(worker["embed_concurrency"])
         if "reader_pool_size" in worker:
             config["reader_pool_size"] = int(worker["reader_pool_size"])
+        if "memory_limit" in worker:
+            config["memory_limit"] = worker["memory_limit"]
 
     # Env var overrides (for CI / one-off runs without editing the file)
     if val := os.environ.get("LACUNA_EMBED_URL"):
@@ -101,6 +104,7 @@ def write_default_config(vault_root: Path) -> Path:
             "sync_workers": _DEFAULTS["sync_workers"],
             "embed_concurrency": _DEFAULTS["embed_concurrency"],
             "reader_pool_size": _DEFAULTS["reader_pool_size"],
+            "memory_limit": _DEFAULTS["memory_limit"],
         },
     }
     cfg_file.write_bytes(tomli_w.dumps(data).encode("utf-8"))
