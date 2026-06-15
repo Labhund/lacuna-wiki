@@ -209,13 +209,18 @@ def initial_sync(
     embed_fn: EmbedFn,
     n_workers: int = 1,
     embed_concurrency: int = 1,
+    rebuild_fts: bool = True,
 ) -> None:
-    """Sync all existing wiki/*.md files at daemon startup.
+    """Sync all existing wiki/*.md files.
 
     When n_workers > 1, pages are processed in parallel using a temporary
     ConnectionPool. Each worker gets its own DB connection and writes to
-    disjoint page rows — no conflicts. FTS index is rebuilt once at the end.
-    The embed semaphore caps simultaneous HTTP requests to the embedding server.
+    disjoint page rows — no conflicts.
+
+    rebuild_fts: if True, rebuild the full-text index at the end. Set False
+    when calling from the daemon watchdog (startup) to skip the expensive
+    checkpoint — the FTS index is already in a good state from the previous
+    run. Only rebuild on explicit sync or when pages actually changed.
     """
     wiki_dir = vault_root / "wiki"
     md_files = [
@@ -233,9 +238,12 @@ def initial_sync(
             return embed_fn(texts)
 
     if n_workers <= 1:
+        pages_changed = 0
         for rel in md_files:
-            sync_page(conn, vault_root, rel, throttled_embed, rebuild_fts=False)
-        _sync_mod._rebuild_fts(conn)
+            if sync_page(conn, vault_root, rel, throttled_embed, rebuild_fts=False):
+                pages_changed += 1
+        if rebuild_fts or pages_changed > 0:
+            _sync_mod._rebuild_fts(conn)
         return
 
     from lacuna_wiki.daemon.connections import ConnectionPool
@@ -245,10 +253,14 @@ def initial_sync(
     worker_pool = ConnectionPool(db, size=n_workers)
     worker_pool.open()
 
+    pages_changed = 0
+
     def sync_one(rel_path):
+        nonlocal pages_changed
         wconn = worker_pool.acquire()
         try:
-            sync_page(wconn, vault_root, rel_path, throttled_embed, rebuild_fts=False)
+            if sync_page(wconn, vault_root, rel_path, throttled_embed, rebuild_fts=False):
+                pages_changed += 1
         finally:
             worker_pool.release(wconn)
 
@@ -260,4 +272,5 @@ def initial_sync(
     finally:
         worker_pool.close()
 
-    _sync_mod._rebuild_fts(conn)
+    if rebuild_fts or pages_changed > 0:
+        _sync_mod._rebuild_fts(conn)

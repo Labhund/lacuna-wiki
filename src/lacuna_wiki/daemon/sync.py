@@ -47,8 +47,8 @@ def sync_page(
     rel_path: Path,
     embed_fn: EmbedFn,
     rebuild_fts: bool = False,
-) -> None:
-    """Full sync of one wiki page to DB. Wraps everything in a transaction.
+) -> bool:
+    """Full sync of one wiki page to DB. Returns True if page content changed.
 
     rel_path: path relative to vault_root, e.g. Path("wiki/attention.md")
     embed_fn: callable(texts) -> list[list[float]] — 768-dim vectors
@@ -62,7 +62,7 @@ def sync_page(
 
     if not full_path.exists():
         _delete_page(conn, slug)
-        return
+        return True
 
     text = full_path.read_text(encoding="utf-8")
     tags, body = parse_frontmatter(text)
@@ -85,7 +85,7 @@ def sync_page(
                 "UPDATE pages SET synthesised_into=? WHERE slug=?",
                 [m.group(1) if m else None, slug],
             )
-            return
+            return False
         if existing_bh == bh:
             # Only tags changed — update metadata and write frontmatter back;
             # skip the expensive section/link/claim re-sync.
@@ -95,7 +95,7 @@ def sync_page(
                 [tags_json, m.group(1) if m else None, existing_id],
             )
             _write_frontmatter_back(conn, full_path, slug, tags, body)
-            return
+            return False
 
     conn.begin()
     try:
@@ -122,6 +122,7 @@ def sync_page(
     if rebuild_fts:
         _rebuild_fts(conn)
     _write_frontmatter_back(conn, full_path, slug, tags, body)
+    return True
 
 
 def _rebuild_fts(conn: duckdb.DuckDBPyConnection) -> None:

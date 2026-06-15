@@ -55,9 +55,11 @@ def _run_watchdog_loop(
 
     # Close reader pool during initial_sync: FTS catalog rebuild needs exclusive
     # DuckDB access and will deadlock against idle reader connections.
+    # rebuild_fts=False: skip expensive checkpoint on daemon startup — FTS index
+    # is already in a good state from the previous run.
     if reader_pool is not None:
         reader_pool.close()
-    initial_sync(conn, vault_root, embed_fn, n_workers=n_workers, embed_concurrency=embed_concurrency)
+    initial_sync(conn, vault_root, embed_fn, n_workers=n_workers, embed_concurrency=embed_concurrency, rebuild_fts=False)
     if reader_pool is not None:
         reader_pool.reopen()
     if submit_sweep is not None:
