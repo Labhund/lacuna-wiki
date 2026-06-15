@@ -17,7 +17,6 @@ from rich.console import Console
 
 from lacuna_wiki.config import load_config
 from lacuna_wiki.sources.chunker import chunk_md
-from lacuna_wiki.sources.embedder import embed_texts
 from lacuna_wiki.sources.extractor import extract_text
 from lacuna_wiki.sources.fetcher import (
     arxiv_id_from_url, fetch_rxiv_html_meta, fetch_rxiv_pdf,
@@ -146,26 +145,12 @@ def add_source(
                     pass
 
             yt_year = final_date.year if final_date else None
-            from lacuna_wiki.db.connection import get_connection
-            from lacuna_wiki.vault import db_path as _vault_db
             if final_authors and yt_year:
-                conn = get_connection(_vault_db(vault_root), readonly=True)
-                try:
-                    key = key_from_author_year(final_authors, yt_year, final_title, conn)
-                finally:
-                    conn.close()
+                key = key_from_author_year(final_authors, yt_year, final_title, conn=None)
             elif final_title:
-                conn = get_connection(_vault_db(vault_root), readonly=True)
-                try:
-                    key = key_from_title(final_title, conn)
-                finally:
-                    conn.close()
+                key = key_from_title(final_title, conn=None)
             else:
-                conn = get_connection(_vault_db(vault_root), readonly=True)
-                try:
-                    key = key_from_url(url, conn)
-                finally:
-                    conn.close()
+                key = key_from_url(url, conn=None)
 
             md_dest = target_dir / f"{key}.md"
             md_dest.write_text(text, encoding="utf-8")
@@ -209,32 +194,18 @@ def add_source(
                     console.print(f"  [yellow]⚠[/yellow] CrossRef returned nothing")
 
             html_meta: dict = {}
-            from lacuna_wiki.db.connection import get_connection
-            from lacuna_wiki.vault import db_path as _db_path
             if bibtex_str:
-                conn = get_connection(_db_path(vault_root), readonly=True)
-                try:
-                    key = derive_key_from_bibtex(bibtex_str, conn)
-                finally:
-                    conn.close()
+                key = derive_key_from_bibtex(bibtex_str, conn=None)
             else:
                 html_meta = fetch_rxiv_html_meta(url)
                 author = html_meta.get("first_author_last", "")
                 year = html_meta.get("year", "")
                 if author and year:
                     from lacuna_wiki.sources.key import _disambiguate
-                    conn = get_connection(_db_path(vault_root), readonly=True)
-                    try:
-                        key = _disambiguate(f"{author}{year}", conn)
-                    finally:
-                        conn.close()
+                    key = _disambiguate(f"{author}{year}", conn=None)
                     console.print(f"  [dim]Key from page meta: {key}[/dim]")
                 else:
-                    conn = get_connection(_db_path(vault_root), readonly=True)
-                    try:
-                        key = key_from_url(url, conn)
-                    finally:
-                        conn.close()
+                    key = key_from_url(url, conn=None)
 
             pdf_dest = target_dir / f"{key}.pdf"
             md_dest = target_dir / f"{key}.md"
@@ -287,20 +258,11 @@ def add_source(
                     parsed_meta = parse_bibtex_fields(bibtex_str)
                     console.print(f"  [green]✓[/green] Bibtex retrieved")
 
-            from lacuna_wiki.db.connection import get_connection
-            from lacuna_wiki.vault import db_path as _vault_db
+            from lacuna_wiki.sources.key import _disambiguate
             if bibtex_str:
-                conn = get_connection(_vault_db(vault_root), readonly=True)
-                try:
-                    key = derive_key_from_bibtex(bibtex_str, conn)
-                finally:
-                    conn.close()
+                key = derive_key_from_bibtex(bibtex_str, conn=None)
             else:
-                conn = get_connection(_vault_db(vault_root), readonly=True)
-                try:
-                    key = key_from_url(url, conn)
-                finally:
-                    conn.close()
+                key = key_from_url(url, conn=None)
 
             final_title = title or parsed_meta.get("title") or jina_meta.get("title")
             final_authors = authors or parsed_meta.get("authors")
@@ -353,17 +315,10 @@ def add_source(
                 else:
                     console.print(f"  [yellow]⚠[/yellow] CrossRef returned nothing — using filename as key")
 
-        # Key derivation needs DB for disambiguation — read-only connection, no lock issue
-        from lacuna_wiki.db.connection import get_connection
-        from lacuna_wiki.vault import db_path
-        conn = get_connection(db_path(vault_root), readonly=True)
-        try:
-            if bibtex_str:
-                key = derive_key_from_bibtex(bibtex_str, conn)
-            else:
-                key = derive_key(src.stem, conn)
-        finally:
-            conn.close()
+        if bibtex_str:
+            key = derive_key_from_bibtex(bibtex_str, conn=None)
+        else:
+            key = derive_key(src.stem, conn=None)
 
         if suffix == ".pdf":
             primary_dest = target_dir / f"{key}.pdf"

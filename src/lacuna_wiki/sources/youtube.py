@@ -83,7 +83,7 @@ def fetch_youtube_transcript(url: str) -> tuple[str, dict]:
     return markdown, meta
 
 
-def key_from_title(title: str, conn: duckdb.DuckDBPyConnection) -> str:
+def key_from_title(title: str, conn: duckdb.DuckDBPyConnection | None = None) -> str:
     """Derive a hyphenated slug from a video title, disambiguated against existing sources.
 
     "Attention Is All You Need — Talk" → "attention-is-all-you-need-talk"

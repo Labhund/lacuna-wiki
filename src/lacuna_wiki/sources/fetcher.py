@@ -12,7 +12,7 @@ from lacuna_wiki.sources.key import _disambiguate
 _JINA_BASE = "https://r.jina.ai/"
 
 
-def key_from_url(url: str, conn: duckdb.DuckDBPyConnection) -> str:
+def key_from_url(url: str, conn: duckdb.DuckDBPyConnection | None = None) -> str:
     """Derive a stable slug from a URL, disambiguated against existing sources.
 
     Strategy:

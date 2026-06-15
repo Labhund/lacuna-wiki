@@ -4,13 +4,13 @@ import re
 import duckdb
 
 
-def derive_key(stem: str, conn: duckdb.DuckDBPyConnection) -> str:
+def derive_key(stem: str, conn: duckdb.DuckDBPyConnection | None = None) -> str:
     """Derive canonical key from a filename stem, disambiguating against the sources table."""
     base = re.sub(r"[^a-z0-9]", "", stem.lower())[:40] or "source"
     return _disambiguate(base, conn)
 
 
-def derive_key_from_bibtex(bibtex: str, conn: duckdb.DuckDBPyConnection) -> str:
+def derive_key_from_bibtex(bibtex: str, conn: duckdb.DuckDBPyConnection | None = None) -> str:
     """Build author+year key from a BibTeX string, disambiguating against the sources table."""
     author_m = re.search(r"author\s*=\s*\{(.+?)\}", bibtex, re.IGNORECASE | re.DOTALL)
     year_m = re.search(r"year\s*=\s*\{?(\d{4})\}?", bibtex, re.IGNORECASE)
@@ -40,7 +40,7 @@ def key_from_author_year(
     author: str,
     year: int | str,
     title: str | None,
-    conn: duckdb.DuckDBPyConnection,
+    conn: duckdb.DuckDBPyConnection | None = None,
 ) -> str:
     """Derive key as {lastname}{year}{title_prefix_5}.
 
@@ -62,7 +62,14 @@ def key_from_author_year(
     return _disambiguate(base, conn)
 
 
-def _disambiguate(base: str, conn: duckdb.DuckDBPyConnection) -> str:
+def _disambiguate(base: str, conn: duckdb.DuckDBPyConnection | None = None) -> str:
+    """Return a unique slug for base. If conn is None, skip disambiguation.
+
+    Without a DB connection, the base key is returned as-is. The daemon's
+    RawSourceHandler will detect collisions during registration and resolve them.
+    """
+    if conn is None:
+        return base
     existing = {row[0] for row in conn.execute("SELECT slug FROM sources").fetchall()}
     if base not in existing:
         return base
