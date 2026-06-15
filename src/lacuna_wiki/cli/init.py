@@ -136,12 +136,60 @@ def _offer_mcp_config(vault_root: Path) -> None:
             copied = copy_skills(openclaw_skills)
             console.print(f"  [green]✓[/green] {len(copied)} skill(s) installed to OpenClaw")
 
+    console.print("\n[bold]Daemon[/bold]")
+    if click.confirm("  Set up lacuna daemon as a systemd user service (auto-starts on login, survives restarts)?", default=True):
+        if _setup_systemd_service(vault_root):
+            console.print("  [green]✓[/green] Daemon running as lacuna-daemon.service")
+
 
 def _lacuna_http_entry(vault_root: Path) -> dict:
     """HTTP MCP entry pointing at the daemon. Used for Claude Code project config."""
     from lacuna_wiki.config import load_config
     port = int(load_config(vault_root).get("mcp_port", 7654))
     return {"type": "http", "url": f"http://127.0.0.1:{port}/mcp"}
+
+
+def _setup_systemd_service(vault_root: Path) -> bool:
+    """Write and enable the lacuna-daemon systemd user service. Returns True on success."""
+    service_dir = Path.home() / ".config" / "systemd" / "user"
+    service_dir.mkdir(parents=True, exist_ok=True)
+    service_path = service_dir / "lacuna-daemon.service"
+
+    lacuna_bin = shutil.which("lacuna")
+    if not lacuna_bin:
+        console.print("  [yellow]⚠[/yellow] Cannot find 'lacuna' on PATH — skipping systemd setup")
+        return False
+
+    service_content = f"""[Unit]
+Description=lacuna wiki daemon — file watcher and MCP server
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart={lacuna_bin} _daemon-run {vault_root}
+ExecStop={lacuna_bin} stop
+WorkingDirectory={vault_root}
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:{Path.home() / ".lacuna" / "daemon.log"}
+StandardError=append:{Path.home() / ".lacuna" / "daemon.log"}
+
+[Install]
+WantedBy=default.target
+"""
+    service_path.write_text(service_content)
+
+    for args in (
+        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "enable", "lacuna-daemon.service"],
+        ["systemctl", "--user", "start", "lacuna-daemon.service"],
+    ):
+        result = subprocess.run(args, capture_output=True, text=True)
+        if result.returncode != 0:
+            console.print(f"  [yellow]⚠[/yellow] {' '.join(args)} failed: {result.stderr.strip()}")
+            return False
+
+    return True
 
 
 def _lacuna_stdio_entry(vault_root: Path) -> dict:
@@ -203,9 +251,11 @@ def _wire_claude_code(vault_root: Path) -> None:
 
 
 def _merge_hermes_mcp(config_path: Path, vault_root: Path) -> None:
-    """Add lacuna MCP server block to Hermes config.yaml."""
+    """Add lacuna MCP server block to Hermes config.yaml (HTTP/SSE transport)."""
     import yaml
-    entry = _lacuna_stdio_entry(vault_root)
+    from lacuna_wiki.config import load_config
+    port = int(load_config(vault_root).get("mcp_port", 7654))
+    entry = {"url": f"http://127.0.0.1:{port}/mcp"}
     data: dict = {}
     if config_path.exists():
         data = yaml.safe_load(config_path.read_text()) or {}
@@ -215,13 +265,10 @@ def _merge_hermes_mcp(config_path: Path, vault_root: Path) -> None:
 
 
 def _merge_openclaw_mcp(vault_root: Path) -> None:
-    """Register lacuna as an MCP server in OpenClaw via its CLI."""
-    e = _lacuna_stdio_entry(vault_root)
-    entry = json.dumps({
-        "command": e["command"],
-        "args": e["args"],
-        "env": e["env"],
-    })
+    """Register lacuna as an MCP server in OpenClaw via its CLI (HTTP/SSE)."""
+    from lacuna_wiki.config import load_config
+    port = int(load_config(vault_root).get("mcp_port", 7654))
+    entry = json.dumps({"url": f"http://127.0.0.1:{port}/mcp"})
     subprocess.run(
         ["openclaw", "mcp", "set", "lacuna", entry],
         check=True,

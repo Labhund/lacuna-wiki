@@ -69,6 +69,140 @@ class WikiEventHandler(FileSystemEventHandler):
             sync_page(self._conn, self._vault_root, rel, self._embed_fn)
 
 
+class RawSourceHandler(FileSystemEventHandler):
+    """Watchdog event handler that registers new raw/ sources in DuckDB.
+
+    When add-source writes .md + .pdf + .bib files into raw/, this handler
+    picks them up and does chunking → embedding → DB registration.
+    File moves (from move-source) trigger a DB path update.
+    """
+
+    def __init__(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        vault_root: Path,
+        embed_fn: EmbedFn,
+    ) -> None:
+        super().__init__()
+        self._conn = conn
+        self._vault_root = vault_root
+        self._embed_fn = embed_fn
+        self._lock = threading.Lock()
+        # Track files we've already registered to avoid double-processing
+        # watchdog fires on_created + on_modified for the same write
+        self._seen: set[str] = set()
+
+    def on_created(self, event) -> None:
+        if event.is_directory:
+            return
+        path = Path(event.src_path)
+        if path.suffix == ".md":
+            self._register(path)
+
+    def on_modified(self, event) -> None:
+        if event.is_directory:
+            return
+        path = Path(event.src_path)
+        if path.suffix == ".md" and str(path) not in self._seen:
+            self._register(path)
+
+    def on_moved(self, event) -> None:
+        """Handle source moves between clusters — update sources.path in DB."""
+        if event.is_directory:
+            return
+        old = Path(event.src_path)
+        new = Path(event.dest_path)
+        # Only care about moves of the primary file (.pdf for papers, .md for URLs)
+        if old.suffix in (".pdf", ".md"):
+            try:
+                old_rel = old.relative_to(self._vault_root)
+                new_rel = new.relative_to(self._vault_root)
+            except ValueError:
+                return
+            key = old.stem
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT id FROM sources WHERE slug=?", [key]
+                ).fetchone()
+                if row is not None:
+                    self._conn.execute(
+                        "UPDATE sources SET path=? WHERE slug=?",
+                        [new_rel.as_posix(), key],
+                    )
+
+    def _register(self, abs_path: Path) -> None:
+        """Register a new raw/ source: chunk → embed → insert into DB."""
+        try:
+            rel = abs_path.relative_to(self._vault_root)
+        except ValueError:
+            return
+
+        key = abs_path.stem
+        # Prevent duplicate registration from rapid-fire watchdog events
+        if key in self._seen:
+            return
+        self._seen.add(key)
+
+        # Only process files inside raw/ subdirectories (not raw/ root)
+        if len(rel.parts) < 2:
+            return
+
+        # Check if already registered
+        row = self._conn.execute(
+            "SELECT id FROM sources WHERE slug=?", [key]
+        ).fetchone()
+        if row is not None:
+            return
+
+        from lacuna_wiki.sources.chunker import chunk_md
+        from lacuna_wiki.sources.register import register_source, register_chunks
+
+        # Chunk and embed the extracted text
+        chunks = chunk_md(abs_path, strategy="heading")
+        if not chunks:
+            return
+
+        embeddings = self._embed_fn([c.text for c in chunks])
+
+        # Determine source type and cite extension from what files exist
+        source_dir = abs_path.parent
+        has_pdf = (source_dir / f"{key}.pdf").exists()
+        has_bib = (source_dir / f"{key}.bib").exists()
+
+        source_type = "paper" if has_pdf else "url"
+        cite_ext = ".pdf" if has_pdf else ".md"
+
+        # Read metadata from .bib sidecar if available
+        title = None
+        authors = None
+        published_date = None
+        if has_bib:
+            bib_path = source_dir / f"{key}.bib"
+            try:
+                from lacuna_wiki.sources.metadata import parse_bibtex_fields
+                bib_text = bib_path.read_text(encoding="utf-8")
+                meta = parse_bibtex_fields(bib_text)
+                title = meta.get("title")
+                authors = meta.get("authors")
+                year = meta.get("year")
+                if year:
+                    from datetime import date
+                    published_date = date(int(year), 1, 1)
+            except Exception:
+                pass
+
+        # The primary file is the PDF if it exists, otherwise the .md
+        primary_path = (source_dir / f"{key}.pdf") if has_pdf else abs_path
+        rel_path = str(primary_path.relative_to(self._vault_root))
+
+        with self._lock:
+            source_id = register_source(
+                self._conn, key, rel_path, title, authors,
+                published_date, source_type,
+            )
+            register_chunks(self._conn, source_id, chunks, embeddings)
+
+
 def initial_sync(
     conn: duckdb.DuckDBPyConnection,
     vault_root: Path,

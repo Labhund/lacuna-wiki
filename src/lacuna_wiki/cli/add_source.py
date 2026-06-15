@@ -1,12 +1,14 @@
-"""lacuna add-source — register a source file or URL in the vault."""
+"""lacuna add-source — register a source file or URL in the vault.
+
+Writes extracted text + metadata to raw/. The daemon's watchdog picks up
+new files and handles chunking, embedding, and DB registration — no
+DuckDB connection needed in this process.
+"""
 from __future__ import annotations
 
-import os
 import shutil
-import signal
 import sys
 import tempfile
-import time
 from datetime import date
 from pathlib import Path
 
@@ -14,8 +16,6 @@ import click
 from rich.console import Console
 
 from lacuna_wiki.config import load_config
-from lacuna_wiki.db.connection import get_connection
-from lacuna_wiki.db.schema import init_db
 from lacuna_wiki.sources.chunker import chunk_md
 from lacuna_wiki.sources.embedder import embed_texts
 from lacuna_wiki.sources.extractor import extract_text
@@ -27,8 +27,7 @@ from lacuna_wiki.sources.fetcher import (
 from lacuna_wiki.sources.youtube import fetch_youtube_transcript, is_youtube_url, key_from_title
 from lacuna_wiki.sources.key import derive_key, derive_key_from_bibtex, key_from_author_year
 from lacuna_wiki.sources.metadata import extract_doi, fetch_bibtex, parse_bibtex_fields
-from lacuna_wiki.sources.register import register_chunks, register_source
-from lacuna_wiki.vault import db_path, find_vault_root, state_dir_for
+from lacuna_wiki.vault import find_vault_root
 
 console = Console()
 
@@ -37,14 +36,14 @@ _SOURCE_TYPES = [
     "transcript", "session", "note", "experiment",
 ]
 
-# Chunking strategy per source type
+# Chunking strategy per source type (used for the chunk count display only;
+# actual chunking is done by the daemon)
 _CHUNK_STRATEGY = {
     "paper": "heading", "preprint": "heading", "book": "heading",
     "blog": "paragraph", "url": "paragraph",
     "podcast": "heading", "transcript": "heading",
     "session": "paragraph", "note": "paragraph", "experiment": "paragraph",
 }
-
 
 _BIB_TYPE_NOTES = {
     "transcript": "YouTube video transcript",
@@ -112,56 +111,14 @@ def add_source(
 
     config = load_config(vault_root)
 
+    # Check embedding server reachability — daemon needs it for registration
     from lacuna_wiki.cli._warn import warn_embed_unreachable
     from lacuna_wiki.sources.embedder import check_embed_server
     check = check_embed_server(config["embed_url"], config["embed_model"])
     if not check.ok:
         warn_embed_unreachable(check.url, check.model, check.error)
-        console.print("[bold red]Aborting — cannot embed source without a running embedding server.[/bold red]")
-        sys.exit(1)
-
-    db = db_path(vault_root)
-    pause_ack = state_dir_for(vault_root) / "daemon.paused"
-
-    from lacuna_wiki.daemon.process import is_running, read_pid
-    daemon_pid = read_pid()
-    daemon_running = daemon_pid is not None and is_running(daemon_pid)
-
-    if daemon_running:
-        os.kill(daemon_pid, signal.SIGUSR1)
-        deadline = time.monotonic() + 10.0
-        while not pause_ack.exists():
-            if time.monotonic() > deadline:
-                console.print("[red]Daemon did not pause within 10 s — aborting.[/red]")
-                sys.exit(1)
-            time.sleep(0.05)
-
-    # Open DB connection — may need to retry if daemon is still initialising
-    # and hasn't entered its SIGUSR1 pause-check loop yet.
-    conn = None
-    for attempt in range(20):
-        try:
-            conn = get_connection(db)
-            break
-        except Exception as exc:
-            if "lock" in str(exc).lower() or "conflicting" in str(exc).lower():
-                if time.monotonic() > deadline + 5:
-                    console.print("[red]Daemon did not release DB lock — aborting.[/red]")
-                    sys.exit(1)
-                time.sleep(0.25)
-            else:
-                raise
-
-    if conn is None:
-        console.print("[red]Failed to open database connection.[/red]")
-        sys.exit(1)
-
-    init_db(conn, dim=config["embed_dim"])
-
-    def _cleanup() -> None:
-        conn.close()
-        if daemon_running:
-            pause_ack.unlink(missing_ok=True)
+        console.print("[yellow]Daemon will not be able to embed this source until the "
+                      "embedding server is available.[/yellow]")
 
     is_url = input_path.startswith(("http://", "https://"))
 
@@ -175,10 +132,8 @@ def add_source(
                 text, yt_meta = fetch_youtube_transcript(url)
             except RuntimeError as exc:
                 console.print(f"[red]Transcript download failed:[/red] {exc}")
-                _cleanup()
                 sys.exit(1)
 
-            # Metadata first — key derivation needs author and year
             final_title = title or yt_meta.get("title")
             final_authors = authors or yt_meta.get("channel")
             final_date: date | None = None
@@ -190,14 +145,27 @@ def add_source(
                 except ValueError:
                     pass
 
-            # Key: author+year+title prefix (matches bibtex convention)
             yt_year = final_date.year if final_date else None
+            from lacuna_wiki.db.connection import get_connection
+            from lacuna_wiki.vault import db_path as _vault_db
             if final_authors and yt_year:
-                key = key_from_author_year(final_authors, yt_year, final_title, conn)
+                conn = get_connection(_vault_db(vault_root), readonly=True)
+                try:
+                    key = key_from_author_year(final_authors, yt_year, final_title, conn)
+                finally:
+                    conn.close()
             elif final_title:
-                key = key_from_title(final_title, conn)
+                conn = get_connection(_vault_db(vault_root), readonly=True)
+                try:
+                    key = key_from_title(final_title, conn)
+                finally:
+                    conn.close()
             else:
-                key = key_from_url(url, conn)
+                conn = get_connection(_vault_db(vault_root), readonly=True)
+                try:
+                    key = key_from_url(url, conn)
+                finally:
+                    conn.close()
 
             md_dest = target_dir / f"{key}.md"
             md_dest.write_text(text, encoding="utf-8")
@@ -215,10 +183,8 @@ def add_source(
                 pdf_bytes = fetch_rxiv_pdf(url)
             except Exception as exc:
                 console.print(f"[red]PDF download failed:[/red] {exc}")
-                _cleanup()
                 sys.exit(1)
 
-            # Extract text via temp file (key not yet known)
             tmp = Path(tempfile.mktemp(suffix=".pdf"))
             try:
                 tmp.write_bytes(pdf_bytes)
@@ -230,7 +196,6 @@ def add_source(
             parsed_meta: dict = {}
             doi = extract_doi(text[:4000])
             if not doi:
-                # arxiv DOI can always be constructed from the URL — no need to find it in PDF
                 arxiv_id = arxiv_id_from_url(url)
                 if arxiv_id:
                     doi = f"10.48550/arXiv.{arxiv_id}"
@@ -243,21 +208,33 @@ def add_source(
                 else:
                     console.print(f"  [yellow]⚠[/yellow] CrossRef returned nothing")
 
-            # HTML meta fallback — fetched when CrossRef returns nothing.
-            # Covers both arxiv and biorxiv; provides key, title, authors, year.
             html_meta: dict = {}
+            from lacuna_wiki.db.connection import get_connection
+            from lacuna_wiki.vault import db_path as _db_path
             if bibtex_str:
-                key = derive_key_from_bibtex(bibtex_str, conn)
+                conn = get_connection(_db_path(vault_root), readonly=True)
+                try:
+                    key = derive_key_from_bibtex(bibtex_str, conn)
+                finally:
+                    conn.close()
             else:
                 html_meta = fetch_rxiv_html_meta(url)
                 author = html_meta.get("first_author_last", "")
                 year = html_meta.get("year", "")
                 if author and year:
                     from lacuna_wiki.sources.key import _disambiguate
-                    key = _disambiguate(f"{author}{year}", conn)
+                    conn = get_connection(_db_path(vault_root), readonly=True)
+                    try:
+                        key = _disambiguate(f"{author}{year}", conn)
+                    finally:
+                        conn.close()
                     console.print(f"  [dim]Key from page meta: {key}[/dim]")
                 else:
-                    key = key_from_url(url, conn)
+                    conn = get_connection(_db_path(vault_root), readonly=True)
+                    try:
+                        key = key_from_url(url, conn)
+                    finally:
+                        conn.close()
 
             pdf_dest = target_dir / f"{key}.pdf"
             md_dest = target_dir / f"{key}.md"
@@ -266,7 +243,6 @@ def add_source(
             if bibtex_str:
                 (target_dir / f"{key}.bib").write_text(bibtex_str, encoding="utf-8")
             else:
-                # Populate from HTML meta where CLI flags were not supplied
                 _bib_title = title or html_meta.get("title")
                 _bib_authors = authors or html_meta.get("authors")
                 _bib_date = None
@@ -297,12 +273,10 @@ def add_source(
                 text = fetch_url_as_markdown(url)
             except Exception as exc:
                 console.print(f"[red]Fetch failed:[/red] {exc}")
-                _cleanup()
                 sys.exit(1)
 
             jina_meta = parse_jina_headers(text)
 
-            # Key: prefer bibtex (via DOI) for academic URLs, fall back to URL segment
             bibtex_str: str | None = None
             parsed_meta: dict = {}
             doi = extract_doi(text[:4000])
@@ -313,10 +287,21 @@ def add_source(
                     parsed_meta = parse_bibtex_fields(bibtex_str)
                     console.print(f"  [green]✓[/green] Bibtex retrieved")
 
-            key = (derive_key_from_bibtex(bibtex_str, conn) if bibtex_str
-                   else key_from_url(url, conn))
+            from lacuna_wiki.db.connection import get_connection
+            from lacuna_wiki.vault import db_path as _vault_db
+            if bibtex_str:
+                conn = get_connection(_vault_db(vault_root), readonly=True)
+                try:
+                    key = derive_key_from_bibtex(bibtex_str, conn)
+                finally:
+                    conn.close()
+            else:
+                conn = get_connection(_vault_db(vault_root), readonly=True)
+                try:
+                    key = key_from_url(url, conn)
+                finally:
+                    conn.close()
 
-            # Metadata: CLI flags > bibtex > Jina headers
             final_title = title or parsed_meta.get("title") or jina_meta.get("title")
             final_authors = authors or parsed_meta.get("authors")
             final_date = None
@@ -347,7 +332,6 @@ def add_source(
         src = Path(input_path).resolve()
         if not src.exists():
             console.print(f"[red]File not found:[/red] {src}")
-            _cleanup()
             sys.exit(1)
 
         suffix = src.suffix.lower()
@@ -369,8 +353,17 @@ def add_source(
                 else:
                     console.print(f"  [yellow]⚠[/yellow] CrossRef returned nothing — using filename as key")
 
-        key = (derive_key_from_bibtex(bibtex_str, conn) if bibtex_str
-               else derive_key(src.stem, conn))
+        # Key derivation needs DB for disambiguation — read-only connection, no lock issue
+        from lacuna_wiki.db.connection import get_connection
+        from lacuna_wiki.vault import db_path
+        conn = get_connection(db_path(vault_root), readonly=True)
+        try:
+            if bibtex_str:
+                key = derive_key_from_bibtex(bibtex_str, conn)
+            else:
+                key = derive_key(src.stem, conn)
+        finally:
+            conn.close()
 
         if suffix == ".pdf":
             primary_dest = target_dir / f"{key}.pdf"
@@ -397,25 +390,12 @@ def add_source(
     source_type = inferred_type
     console.print(f"  [green]✓[/green] {primary_dest.relative_to(vault_root)}")
 
-    # --- Shared: chunk → embed → register ---
+    # Count chunks for display only — daemon handles actual embedding + registration
     strategy = _CHUNK_STRATEGY.get(source_type, "paragraph")
     chunks = chunk_md(md_dest, strategy=strategy)
-    if not chunks:
-        console.print("  [yellow]⚠[/yellow] No chunks produced — file may be empty")
-        _cleanup()
-        return
-
-    console.print(f"  {len(chunks)} chunks — embedding...")
-    embeddings = embed_texts(
-        [c.text for c in chunks],
-        url=config["embed_url"],
-        model=config["embed_model"],
-    )
-
-    rel_path = str(primary_dest.relative_to(vault_root))
-    source_id = register_source(conn, key, rel_path, final_title, final_authors, final_date, source_type)
-    register_chunks(conn, source_id, chunks, embeddings)
-    _cleanup()
+    chunk_count = len(chunks)
+    del chunks  # free memory — daemon re-chunks from file
 
     console.print(f"\n  Read:    {md_dest.relative_to(vault_root)}")
     console.print(f"  Cite as: [[{key}{cite_ext}]]", markup=False)
+    console.print(f"  [dim]{chunk_count} chunks — daemon will embed and register[/dim]")

@@ -16,6 +16,8 @@ def mcp_command() -> None:
 
     For normal use, start the daemon instead — it runs the MCP server on SSE
     alongside the watchdog in one process, avoiding DuckDB lock contention.
+
+    Refuses to start if the daemon is already running (conflicting DB lock).
     """
     vault_env = os.environ.get("LACUNA_VAULT")
     if vault_env:
@@ -25,6 +27,21 @@ def mcp_command() -> None:
 
     if vault_root is None:
         click.echo("LACUNA_VAULT not set and not inside an lacuna vault.", err=True)
+        sys.exit(1)
+
+    # Guard: refuse to start if daemon is running — would hit DuckDB lock contention
+    from lacuna_wiki.daemon.process import is_running, read_pid
+    pid = read_pid()
+    if pid and is_running(pid):
+        from lacuna_wiki.config import load_config
+        config = load_config(vault_root)
+        mcp_port = config.get("mcp_port", 7654)
+        click.echo(
+            f"Daemon is already running (PID {pid}) and serving MCP on "
+            f"http://localhost:{mcp_port}/mcp (SSE transport).\n"
+            f"Use the daemon SSE endpoint instead — no lock contention, same API.",
+            err=True,
+        )
         sys.exit(1)
 
     db = db_path(vault_root)

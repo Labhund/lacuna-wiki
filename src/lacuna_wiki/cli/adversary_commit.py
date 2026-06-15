@@ -1,24 +1,22 @@
 """lacuna adversary-commit — batch-write adversary verdicts to DuckDB.
 
-Pauses the daemon while it holds the RW connection, writes all verdicts,
-then signals the daemon to resume.
+When the daemon is running, delegates via the status API.
+Otherwise opens the DB directly.
 """
 from __future__ import annotations
 
-import os
-import signal
+import json
 import sys
-import time
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import click
 
-from lacuna_wiki.vault import db_path, find_vault_root, state_dir_for
+from lacuna_wiki.vault import db_path, find_vault_root
 
 _VALID_RELS = {"supports", "refutes", "gap"}
-_PAUSE_TIMEOUT = 10.0
 
 
 @dataclass(frozen=True)
@@ -90,7 +88,7 @@ def write_verdicts(
     help="Supersession to record. Repeat for multiple.",
 )
 def adversary_commit(verdict_strs: tuple[str, ...], supersede_strs: tuple[str, ...]) -> None:
-    """Batch-commit adversary verdicts to DuckDB, pausing the daemon if running."""
+    """Batch-commit adversary verdicts to DuckDB, delegating to daemon if running."""
     if not verdict_strs and not supersede_strs:
         click.echo("Nothing to commit — provide --verdict or --supersede.", err=True)
         sys.exit(1)
@@ -118,36 +116,47 @@ def adversary_commit(verdict_strs: tuple[str, ...], supersede_strs: tuple[str, .
         click.echo("Not inside an lacuna vault.", err=True)
         sys.exit(1)
 
-    db = db_path(vault_root)
-    pause_ack = state_dir_for(vault_root) / "daemon.paused"
-
-    # Pause daemon if running
     from lacuna_wiki.daemon.process import is_running, read_pid
     pid = read_pid()
-    daemon_running = pid is not None and is_running(pid)
+    if pid and is_running(pid):
+        # Daemon running — delegate via API
+        from lacuna_wiki.config import load_config
+        config = load_config(vault_root)
+        mcp_port = int(config.get("mcp_port", 7654))
+        api_url = f"http://127.0.0.1:{mcp_port + 1}/adversary-commit"
 
-    if daemon_running:
-        os.kill(pid, signal.SIGUSR1)
-        deadline = time.monotonic() + _PAUSE_TIMEOUT
-        while not pause_ack.exists():
-            if time.monotonic() > deadline:
-                click.echo(
-                    f"Daemon (PID {pid}) did not pause within {_PAUSE_TIMEOUT:.0f}s.",
-                    err=True,
-                )
+        body = {
+            "verdicts": [{"claim_id": v.claim_id, "rel": v.rel} for v in verdicts],
+            "supersessions": [{"old_id": s.old_id, "new_id": s.new_id} for s in supersessions],
+        }
+
+        try:
+            data = json.dumps(body).encode()
+            req = urllib.request.Request(
+                api_url, data=data, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+            if result.get("status") == "ok":
+                n_v = result.get("verdicts", len(verdicts))
+                n_s = result.get("supersessions", len(supersessions))
+                click.echo(f"Committed {n_v} verdict(s), {n_s} supersession(s).")
+            else:
+                click.echo(f"Error: {result.get('error', 'unknown')}", err=True)
                 sys.exit(1)
-            time.sleep(0.05)
+        except Exception as exc:
+            click.echo(f"Failed to reach daemon API: {exc}", err=True)
+            sys.exit(1)
+    else:
+        # No daemon — direct DB access
+        from lacuna_wiki.db.connection import get_connection
+        conn = get_connection(db_path(vault_root), readonly=False)
+        try:
+            write_verdicts(conn, verdicts, supersessions)
+        finally:
+            conn.close()
 
-    # Write verdicts with RW connection
-    from lacuna_wiki.db.connection import get_connection
-    conn = get_connection(db, readonly=False)
-    try:
-        write_verdicts(conn, verdicts, supersessions)
-    finally:
-        conn.close()
-        if daemon_running:
-            pause_ack.unlink(missing_ok=True)  # signal daemon to resume
-
-    n_v = len(verdicts)
-    n_s = len(supersessions)
-    click.echo(f"Committed {n_v} verdict(s), {n_s} supersession(s).")
+        n_v = len(verdicts)
+        n_s = len(supersessions)
+        click.echo(f"Committed {n_v} verdict(s), {n_s} supersession(s).")

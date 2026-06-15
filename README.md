@@ -30,7 +30,7 @@ pip install lacuna-wiki
 lacuna init ~/my-vault
 ```
 
-`lacuna init` creates your vault directory structure, sets up the DuckDB index in `~/.lacuna/`, and asks whether to wire the MCP server into Claude Code and/or Hermes automatically. Takes about 10 seconds.
+`lacuna init` creates your vault directory structure, sets up the DuckDB index in `~/.lacuna/`, offers to wire the MCP server into Claude Code and/or Hermes, installs agent skills, and sets up the daemon as a systemd service. Takes about 10 seconds.
 
 ---
 
@@ -213,41 +213,35 @@ Both skills support an `auto` mode for unattended runs — pass `"auto"` or `"ju
 
 `lacuna init` handles all of this automatically. If you need to wire things by hand:
 
-**Claude Code**
+**Start the daemon first.** The daemon owns the database exclusively — all MCP clients connect to it via HTTP. Without the daemon, nothing works.
 
-The daemon serves the MCP tool via StreamableHTTP on `mcp_port` (default 7654). Point Claude Code at it directly — this avoids spawning a second process that would conflict with the daemon's DB lock:
+```bash
+lacuna start
+# Or, for a permanent setup:
+lacuna init  # offers to set up systemd service during wizard
+```
+
+**Claude Code**
 
 ```bash
 claude mcp add --transport http --scope user lacuna http://127.0.0.1:7654/mcp
 ```
 
-**Hermes**
-```bash
-hermes mcp add lacuna --url http://127.0.0.1:7654/mcp
-```
+**Hermes** (`~/.hermes/config.yaml`)
 
-The daemon must be running (`lacuna start`) for either client to connect. If you need the tool available without the daemon, fall back to stdio:
-
-```bash
-claude mcp add --scope user -e LACUNA_VAULT=/path/to/my-vault -- lacuna /full/path/to/lacuna mcp
-```
-
-Find the full path with `which lacuna`.
-
-**Hermes (`~/.hermes/config.yaml`)**
 ```yaml
 mcp_servers:
   lacuna:
-    command: lacuna
-    args: [mcp]
-    env:
-      LACUNA_VAULT: /path/to/my-vault
+    url: "http://localhost:7654/mcp"
 ```
 
 **OpenClaw**
+
 ```bash
-openclaw mcp set lacuna '{"command":"lacuna","args":["mcp"],"env":{"LACUNA_VAULT":"/path/to/my-vault"}}'
+openclaw mcp set lacuna '{"url":"http://127.0.0.1:7654/mcp"}'
 ```
+
+The daemon must be running (`lacuna start` or the systemd service) for any client to connect. All clients share the daemon's connection pool — no lock contention, no conflicts.
 
 ---
 
@@ -258,7 +252,47 @@ pip install --upgrade lacuna-wiki
 lacuna sync
 ```
 
-`lacuna sync` applies any schema migrations automatically — safe to run on every upgrade. If the daemon is running, stop it first (`lacuna stop`) and restart after sync.
+`lacuna sync` applies any schema migrations automatically — safe to run on every upgrade. When the daemon is running, sync delegates to it via the status API (no lock contention, no need to stop anything).
+
+---
+
+## Running the Daemon
+
+The daemon watches your vault for changes, handles embedding and DB registration, and serves the MCP API. The recommended setup is a systemd user service (auto-starts on login, survives agent restarts):
+
+```bash
+lacuna init  # offers to set up systemd service during wizard
+```
+
+Or manually:
+
+```bash
+# One-time: write and enable the service file
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/lacuna-daemon.service << 'EOF'
+[Unit]
+Description=lacuna wiki daemon — file watcher and MCP server
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/you/.local/bin/lacuna _daemon-run /path/to/vault
+ExecStop=/home/you/.local/bin/lacuna stop
+WorkingDirectory=/path/to/vault
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:%h/.lacuna/daemon.log
+StandardError=append:%h/.lacuna/daemon.log
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now lacuna-daemon.service
+```
+
+For ad-hoc use, `lacuna start` / `lacuna stop` work fine — just note that if started from within an agent process (e.g. Hermes gateway), the daemon will be killed when that process restarts. The systemd service avoids this by owning its own cgroup.
 
 ---
 

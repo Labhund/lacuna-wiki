@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import signal
 import threading
 import time
 from pathlib import Path
@@ -9,14 +8,6 @@ from pathlib import Path
 _STATE_DIR = Path.home() / ".lacuna"
 _PID_FILE = _STATE_DIR / "daemon.pid"
 _LOG_FILE = _STATE_DIR / "daemon.log"
-
-_pause_event = threading.Event()
-_sweep_conn_ref = None  # Mutable ref to sweep job's connection for pause protocol
-
-
-def _handle_sigusr1(signum, frame) -> None:
-    """Signal handler: request a daemon pause."""
-    _pause_event.set()
 
 
 def write_pid(pid: int) -> None:
@@ -46,33 +37,10 @@ def is_running(pid: int) -> bool:
         return True  # process exists but we can't signal it
 
 
-def _close_all_for_pause(write_conn, reader_pool) -> None:
-    """Close all DuckDB connections so the file lock is fully released.
-
-    DuckDB's lock is process-level: any open connection holds it.
-    Closing only write_conn is insufficient — reader pool connections
-    must also be closed before the CLI can open its own write connection.
-    """
-    reader_pool.close()
-    # Close sweep job's ephemeral connection if one exists
-    global _sweep_conn_ref
-    if _sweep_conn_ref is not None:
-        try:
-            _sweep_conn_ref.close()
-        except Exception:
-            pass
-        _sweep_conn_ref = None
-    try:
-        write_conn.close()
-    except Exception:
-        pass
-
-
 def _run_watchdog_loop(
     conn,
     vault_root: Path,
     embed_fn,
-    pause_ack: Path,
     reader_pool=None,
     n_workers: int = 1,
     embed_concurrency: int = 1,
@@ -80,12 +48,9 @@ def _run_watchdog_loop(
 ) -> None:
     """Watchdog loop — runs on a background thread inside the daemon process.
 
-    Watches wiki/ for changes and syncs them to the DB. Handles SIGUSR1-driven
-    pause/resume for the adversary-commit workflow (pause_ack path is used as
-    the handshake file).
+    Watches wiki/ and raw/ for changes and syncs them to the DB.
     """
-    from lacuna_wiki.db.connection import get_connection
-    from lacuna_wiki.daemon.watcher import WikiEventHandler, initial_sync
+    from lacuna_wiki.daemon.watcher import WikiEventHandler, RawSourceHandler, initial_sync
     from lacuna_wiki.vault import db_path
 
     # Close reader pool during initial_sync: FTS catalog rebuild needs exclusive
@@ -99,37 +64,16 @@ def _run_watchdog_loop(
         submit_sweep()
 
     from watchdog.observers import Observer
-    handler = WikiEventHandler(conn, vault_root, embed_fn)
+    wiki_handler = WikiEventHandler(conn, vault_root, embed_fn)
+    raw_handler = RawSourceHandler(conn, vault_root, embed_fn)
     observer = Observer()
-    observer.schedule(handler, str(vault_root / "wiki"), recursive=True)
+    observer.schedule(wiki_handler, str(vault_root / "wiki"), recursive=True)
+    observer.schedule(raw_handler, str(vault_root / "raw"), recursive=True)
     observer.start()
 
     try:
         while True:
-            if _pause_event.is_set():
-                with handler._lock:
-                    observer.stop()
-                observer.join()
-
-                # Close ALL connections — DuckDB lock is process-level
-                _close_all_for_pause(conn, reader_pool)
-
-                pause_ack.write_text("paused")
-                while pause_ack.exists():
-                    time.sleep(0.05)
-
-                # Reopen everything
-                conn = get_connection(db_path(vault_root))
-                if reader_pool is not None:
-                    reader_pool.reopen()
-                handler._conn = conn
-                observer = Observer()
-                observer.schedule(handler, str(vault_root / "wiki"), recursive=True)
-                observer.start()
-                _pause_event.clear()
-
             time.sleep(1)
-
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
@@ -153,7 +97,6 @@ def run_daemon(vault_root: Path) -> None:
     from lacuna_wiki.sources.embedder import embed_texts
     from lacuna_wiki.vault import db_path, state_dir_for
 
-    signal.signal(signal.SIGUSR1, _handle_sigusr1)
     write_pid(os.getpid())
 
     config = load_config(vault_root)
@@ -164,7 +107,6 @@ def run_daemon(vault_root: Path) -> None:
     reader_pool_size = int(config["reader_pool_size"])
 
     db = db_path(vault_root)
-    pause_ack = state_dir_for(vault_root) / "daemon.paused"
 
     # Write connection: owned by the watchdog thread.
     # Auto-recover from corrupt WAL left by a mid-FTS-rebuild kill.
@@ -196,8 +138,7 @@ def run_daemon(vault_root: Path) -> None:
         from lacuna_wiki.mcp.audit import precompute_unlinked_candidates
         import logging
         log = logging.getLogger(__name__)
-        global _sweep_conn_ref
-        _sweep_conn_ref = conn = get_connection(db)
+        conn = get_connection(db)
         try:
             if force:
                 rows = conn.execute("SELECT id FROM pages").fetchall()
@@ -218,7 +159,6 @@ def run_daemon(vault_root: Path) -> None:
             log.error("Sweep job error: %s", exc)
         finally:
             sweep_state["running"] = False
-            _sweep_conn_ref = None
             conn.close()
 
     def _submit_sweep(batch: int | None = None, force: bool = False) -> None:
@@ -234,11 +174,14 @@ def run_daemon(vault_root: Path) -> None:
         reader_pool=reader_pool,
         sweep_state=sweep_state,
         submit_sweep=_submit_sweep,
+        db_path=db,
+        vault_root=vault_root,
+        embed_fn=embed_fn,
     )
 
     watchdog_thread = threading.Thread(
         target=_run_watchdog_loop,
-        args=(write_conn, vault_root, embed_fn, pause_ack),
+        args=(write_conn, vault_root, embed_fn),
         kwargs={
             "reader_pool": reader_pool,
             "n_workers": n_workers,
@@ -251,7 +194,7 @@ def run_daemon(vault_root: Path) -> None:
     watchdog_thread.start()
 
     # MCP server acquires/releases from reader pool per-call, so pool
-    # close/reopen during initial_sync or SIGUSR1 pause never strands it.
+    # close/reopen during initial_sync never strands it.
     make_wiki_tool(reader_pool, embed_fn, vault_root=vault_root)
 
     try:
@@ -260,4 +203,3 @@ def run_daemon(vault_root: Path) -> None:
     finally:
         api_server.shutdown()
         _PID_FILE.unlink(missing_ok=True)
-        pause_ack.unlink(missing_ok=True)
